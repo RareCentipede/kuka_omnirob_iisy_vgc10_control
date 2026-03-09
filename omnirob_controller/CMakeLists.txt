@@ -10,6 +10,8 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
+include_directories(include)
+
 add_executable(omnirob_controller src/omnirob_controller.cpp)
 
 target_include_directories(omnirob_controller PUBLIC
@@ -23,9 +25,24 @@ ament_target_dependencies(
   geometry_msgs
 )
 
+install(
+  DIRECTORY include/ 
+  DESTINATION include/${PROJECT_NAME}
+)
+
 install(TARGETS 
-  omnirob_controller 
-  DESTINATION lib/${PROJECT_NAME})
+  omnirob_controller
+  EXPORT export_${PROJECT_NAME} 
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+ament_export_dependencies(
+  rclcpp
+  geometry_msgs
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
