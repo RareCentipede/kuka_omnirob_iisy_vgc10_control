@@ -1,4 +1,4 @@
-#include "include/omnirob_controller.hpp"
+#include "omnirob_controller.hpp"
 
 OmnirobController::OmnirobController() : Node("omnirob_controller") {
   RCLCPP_INFO(this->get_logger(), "hello world omnirob_controller package");
