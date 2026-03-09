@@ -11,17 +11,20 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 add_executable(omnirob_controller src/omnirob_controller.cpp)
+
 target_include_directories(omnirob_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 target_compile_features(omnirob_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+
 ament_target_dependencies(
   omnirob_controller
-  "rclcpp"
-  "geometry_msgs"
+  rclcpp
+  geometry_msgs
 )
 
-install(TARGETS omnirob_controller
+install(TARGETS 
+  omnirob_controller 
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
