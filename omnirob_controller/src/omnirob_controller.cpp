@@ -13,6 +13,11 @@ void OmnirobController::pose_callback(const geometry_msgs::msg::Pose &pose_msg) 
       pose_msg.orientation.x, pose_msg.orientation.y, pose_msg.orientation.z, pose_msg.orientation.w);
 }
 
+//TODO: Create service to move the robot to a desired pose, and create a client to call that service from a test node.
+//TODO: Create an arm control interface, check to use service or action server, and create a client to call that
+//TODO: service/action server from a test node.
+//TODO: Create a scene to pick and place blocks.
+
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
