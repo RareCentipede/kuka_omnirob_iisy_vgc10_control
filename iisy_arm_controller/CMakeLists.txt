@@ -19,14 +19,26 @@ target_include_directories(iisy_arm_controller PUBLIC
 target_compile_features(iisy_arm_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(
   iisy_arm_controller
-  "moveit_ros_planning_interface"
-  "rclcpp"
-  "geometry_msgs"
-  "mpnp_interfaces"
+  moveit_ros_planning_interface
+  rclcpp
+  geometry_msgs
+  mpnp_interfaces
+)
+
+install(
+  DIRECTORY include/ 
+  DESTINATION include/${PROJECT_NAME}
 )
 
 install(TARGETS iisy_arm_controller
   DESTINATION lib/${PROJECT_NAME})
+
+ament_export_dependencies(
+  moveit_ros_planning_interface
+  rclcpp
+  geometry_msgs
+  mpnp_interfaces
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
