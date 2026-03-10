@@ -2,15 +2,26 @@
 
 OmnirobController::OmnirobController() : Node("omnirob_controller") {
     RCLCPP_INFO(this->get_logger(), "hello world omnirob_controller package");
+
+    rclcpp::CallbackGroup::SharedPtr cb_group = this->create_callback_group(
+        rclcpp::CallbackGroupType::Reentrant
+    );
+
+    rclcpp::SubscriptionOptions subscription_options;
+    subscription_options.callback_group = cb_group;
+
     subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      "/omnirob_controller/odometry", 10, std::bind(&OmnirobController::odom_calback, this, std::placeholders::_1)
+      "/omnirob_controller/odometry", 10, std::bind(&OmnirobController::odom_calback, this, std::placeholders::_1),
+      subscription_options
     );
 
     twist_publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/omnirob_controller/reference", 10);
 
     move_base_service_ = this->create_service<mpnp_interfaces::srv::MoveBase>(
       "/omnirob_controller/move_base", std::bind(&OmnirobController::move_base_service, this,
-        std::placeholders::_1, std::placeholders::_2)
+        std::placeholders::_1, std::placeholders::_2),
+        rclcpp::QoS(10),
+        cb_group
     );
 
     position = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
@@ -52,7 +63,7 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
     twist_msg.twist.angular.z = 0.0;
 
     double start_time = this->now().seconds();
-    while ((this->now().seconds() - start_time) < est_time){
+    while (!isClose(position, target_position, 0.05) && (this->now().seconds() - start_time < est_time + 5.0)) {
       twist_msg.header.stamp = this->now();
       twist_msg.header.frame_id = "omnirob_base_link"; // Assuming the frame of reference is base
 
@@ -83,7 +94,6 @@ bool isClose(const Vector4d &home, const Vector4d &target, double tol){
   return euclidean_dist < tol;
 }
 
-//TODO: Create service to move the robot to a desired pose, and create a client to call that service from a test node.
 //TODO: Create an arm control interface, check to use service or action server, and create a client to call that
 //TODO: service/action server from a test node.
 //TODO: Create a scene to pick and place blocks.
@@ -92,7 +102,11 @@ int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<OmnirobController>();
-  rclcpp::spin(node);
+
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+  executor.spin();
+
   rclcpp::shutdown();
   return 0;
 }

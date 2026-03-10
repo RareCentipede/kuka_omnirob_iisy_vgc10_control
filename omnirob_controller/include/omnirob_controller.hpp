@@ -6,6 +6,7 @@
 #include <cmath>
 #include <array>
 #include <eigen3/Eigen/Dense>
+#include <mutex>
 
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -20,6 +21,7 @@ class OmnirobController: public rclcpp::Node{
     OmnirobController();
     Vector4d position; // [x, y, z, w]
     Vector4d target_position; // [x, y, z, w]
+    std::mutex position_mutex; // Mutex to protect access to position
 
   private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
