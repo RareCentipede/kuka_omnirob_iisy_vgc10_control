@@ -9,11 +9,14 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(mpnp_interfaces REQUIRED)
 
 include_directories(include)
 
 add_executable(omnirob_controller src/omnirob_controller.cpp)
+target_link_libraries(omnirob_controller Eigen3::Eigen)
 
 target_include_directories(omnirob_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -24,7 +27,9 @@ ament_target_dependencies(
   omnirob_controller
   rclcpp
   geometry_msgs
+  nav_msgs
   mpnp_interfaces
+  Eigen3
 )
 
 install(
@@ -43,7 +48,9 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp
   geometry_msgs
+  nav_msgs
   mpnp_interfaces
+  Eigen3
 )
 
 if(BUILD_TESTING)
