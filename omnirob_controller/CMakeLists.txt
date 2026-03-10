@@ -9,6 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(mpnp_interfaces REQUIRED)
 
 include_directories(include)
 
@@ -23,6 +24,7 @@ ament_target_dependencies(
   omnirob_controller
   rclcpp
   geometry_msgs
+  mpnp_interfaces
 )
 
 install(
@@ -33,15 +35,15 @@ install(
 install(TARGETS 
   omnirob_controller
   EXPORT export_${PROJECT_NAME} 
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
+  DESTINATION
+    lib/${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp
   geometry_msgs
+  mpnp_interfaces
 )
 
 if(BUILD_TESTING)
