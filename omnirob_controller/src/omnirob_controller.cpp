@@ -33,7 +33,7 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
       position[0] = odom_msg.pose.pose.position.x;
       position[1] = odom_msg.pose.pose.position.y;
       position[2] = odom_msg.pose.pose.position.z;
-      position[3] = odom_msg.pose.pose.orientation.w; // Assuming we want to track the w component of the orientation as well
+      position[3] = 0.0;
 }
 
 void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
@@ -55,22 +55,30 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
     vel *= request->speed; // Scale by the requested speed
     double est_time = dist / request->speed;
 
-    twist_msg.twist.linear.x = vel[0];
-    twist_msg.twist.linear.y = vel[1];
-    twist_msg.twist.linear.z = vel[2];
-    twist_msg.twist.angular.x = 0.0;
-    twist_msg.twist.angular.y = 0.0;
-    twist_msg.twist.angular.z = 0.0;
-
     double start_time = this->now().seconds();
-    while (!isClose(position, target_position, 0.05) && (this->now().seconds() - start_time < est_time + 5.0)) {
+    double elapsed_time = this->now().seconds() - start_time;
+    while (!isClose(position, target_position, 1e-3) && (elapsed_time < (est_time * 2.0)))
+    {
+      vel = target_position - position;
+      vel.normalize();
+      vel *= request->speed; // Scale by the requested speed
+
       twist_msg.header.stamp = this->now();
       twist_msg.header.frame_id = "omnirob_base_link"; // Assuming the frame of reference is base
+      twist_msg.twist.linear.x = vel[0];
+      twist_msg.twist.linear.y = vel[1];
+      twist_msg.twist.linear.z = vel[2];
+      twist_msg.twist.angular.x = 0.0;
+      twist_msg.twist.angular.y = 0.0;
+      twist_msg.twist.angular.z = 0.0;
 
       twist_publisher_->publish(twist_msg);
-      RCLCPP_INFO(this->get_logger(), "Current position: (%f, %f, %f, %f), Target position: (%f, %f, %f, %f)",
-        position[0], position[1], position[2], position[3],
-        target_position[0], target_position[1], target_position[2], target_position[3]);
+      elapsed_time = this->now().seconds() - start_time;
+      if ((static_cast<int>(elapsed_time) % 5) < 1e-5){
+        RCLCPP_INFO(this->get_logger(), "Current position: (%f, %f, %f, %f), Target position: (%f, %f, %f, %f)",
+          position[0], position[1], position[2], position[3],
+          target_position[0], target_position[1], target_position[2], target_position[3]);
+      }
     }
 
     // Stop the robot
@@ -85,12 +93,7 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
 }
 
 bool isClose(const Vector4d &home, const Vector4d &target, double tol){
-  double euclidean_dist = 0.0;
-  for (int i = 0; i < 4; i++){
-    euclidean_dist += std::pow(home[i] - target[i], 2);
-  }
-
-  euclidean_dist = std::sqrt(euclidean_dist);
+  double euclidean_dist = (home - target).norm();
   return euclidean_dist < tol;
 }
 
