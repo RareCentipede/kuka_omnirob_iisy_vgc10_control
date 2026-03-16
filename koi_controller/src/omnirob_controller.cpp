@@ -24,6 +24,8 @@ OmnirobController::OmnirobController() : Node("omnirob_controller") {
         cb_group
     );
 
+    tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+
     position = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
     target_position = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
 }
@@ -33,7 +35,22 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
       position[0] = odom_msg.pose.pose.position.x;
       position[1] = odom_msg.pose.pose.position.y;
       position[2] = odom_msg.pose.pose.position.z;
-      position[3] = 0.0;
+      position[3] = odom_msg.pose.pose.orientation.w; // Assuming we only care about the yaw component for simplicity
+
+      geometry_msgs::msg::TransformStamped transformStamped;
+      transformStamped.header.stamp = this->now();
+      transformStamped.header.frame_id = "world";
+      transformStamped.child_frame_id = "platform_base_link";
+      transformStamped.transform.translation.x = position[0];
+      transformStamped.transform.translation.y = position[1];
+      transformStamped.transform.translation.z = position[2];
+      transformStamped.transform.rotation.w = position[3];
+
+      transformStamped.transform.rotation.x = odom_msg.pose.pose.orientation.x;
+      transformStamped.transform.rotation.y = odom_msg.pose.pose.orientation.y;
+      transformStamped.transform.rotation.z = odom_msg.pose.pose.orientation.z;
+
+      tf_broadcaster_->sendTransform(transformStamped);
 }
 
 void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
