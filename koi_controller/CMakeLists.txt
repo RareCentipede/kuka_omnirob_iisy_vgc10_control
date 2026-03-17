@@ -5,14 +5,23 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(PACKAGE_INCLUDE_DEPENDS
+  ament_cmake
+  rclcpp_action
+  geometry_msgs
+  moveit_ros_planning_interface
+  mpnp_interfaces
+  nav_msgs
+  tf2_geometry_msgs
+  tf2_ros
+  ros_gz_bridge
+  moveit_task_constructor_core
+)
+
 # find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(moveit_ros_planning_interface REQUIRED)
-find_package(mpnp_interfaces REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
+foreach(Dependency IN ITEMS ${PACKAGE_INCLUDE_DEPENDS})
+  find_package(${Dependency} REQUIRED)
+endforeach()
 
 add_executable(koi_controller src/koi_controller.cpp)
 add_executable(omnirob_controller src/omnirob_controller.cpp)
@@ -22,42 +31,26 @@ target_include_directories(koi_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 target_include_directories(omnirob_controller PUBLIC
-$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-$<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 target_include_directories(iisy_arm_controller PUBLIC
-$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-$<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
 target_compile_features(koi_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 target_compile_features(omnirob_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 target_compile_features(iisy_arm_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 
-ament_target_dependencies(
-  koi_controller
-  "rclcpp"
-  "geometry_msgs"
-  "moveit_ros_planning_interface"
-  "mpnp_interfaces"
-  "nav_msgs"
+ament_target_dependencies(koi_controller
+  ${PACKAGE_INCLUDE_DEPENDS}
 )
 
-ament_target_dependencies(
-  iisy_arm_controller
-  "rclcpp"
-  "geometry_msgs"
-  "moveit_ros_planning_interface"
-  "mpnp_interfaces"
-  "nav_msgs"
-  "tf2_geometry_msgs"
+ament_target_dependencies(iisy_arm_controller
+  ${PACKAGE_INCLUDE_DEPENDS}
 )
 
-ament_target_dependencies(
-  omnirob_controller
-  "rclcpp"
-  "geometry_msgs"
-  "moveit_ros_planning_interface"
-  "mpnp_interfaces"
-  "nav_msgs"
+ament_target_dependencies(omnirob_controller
+  ${PACKAGE_INCLUDE_DEPENDS}
 )
 
 install(TARGETS koi_controller omnirob_controller iisy_arm_controller
