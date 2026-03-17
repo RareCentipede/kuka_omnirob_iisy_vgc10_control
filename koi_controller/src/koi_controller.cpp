@@ -1,19 +1,11 @@
 #include <rclcpp/rclcpp.hpp>
-#include <moveit/planning_scene/planning_scene.h>
-#include <moveit/planning_scene_interface/planning_scene_interface.h>
+#include <moveit/planning_scene/planning_scene.hpp>
+#include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <moveit/task_constructor/task.h>
 #include <moveit/task_constructor/solvers.h>
 #include <moveit/task_constructor/stages.h>
-#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#else
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#endif
-#if __has_include(<tf2_eigen/tf2_eigen.hpp>)
 #include <tf2_eigen/tf2_eigen.hpp>
-#else
-#include <tf2_eigen/tf2_eigen.h>
-#endif
 
 static const rclcpp::Logger LOGGER = rclcpp::get_logger("mtc_tutorial");
 namespace mtc = moveit::task_constructor;
@@ -75,7 +67,7 @@ void MTCTaskNode::doTask()
   }
   catch (mtc::InitStageException& e)
   {
-    RCLCPP_ERROR_STREAM(LOGGER, e);
+    RCLCPP_ERROR_STREAM(LOGGER, "Task initialization failed: " << e.what());
     return;
   }
 
@@ -84,6 +76,7 @@ void MTCTaskNode::doTask()
     RCLCPP_ERROR_STREAM(LOGGER, "Task planning failed");
     return;
   }
+
   task_.introspection().publishSolution(*task_.solutions().front());
 
   auto result = task_.execute(*task_.solutions().front());
@@ -102,9 +95,9 @@ mtc::Task MTCTaskNode::createTask()
   task.stages()->setName("demo task");
   task.loadRobotModel(node_);
 
-  const auto& arm_group_name = "panda_arm";
-  const auto& hand_group_name = "hand";
-  const auto& hand_frame = "panda_hand";
+  const auto& arm_group_name = "arm_controller";
+  const auto& hand_group_name = "vacuum_controller";
+  const auto& hand_frame = "onrobot_vgc10_base_link";
 
   // Set task properties
   task.setProperty("group", arm_group_name);
@@ -129,12 +122,18 @@ mtc::Task MTCTaskNode::createTask()
   cartesian_planner->setMaxAccelerationScalingFactor(1.0);
   cartesian_planner->setStepSize(.01);
 
-  auto stage_open_hand =
-      std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
-  stage_open_hand->setGroup(hand_group_name);
-  stage_open_hand->setGoal("open");
-  task.add(std::move(stage_open_hand));
+  auto stage_test_movement =
+      std::make_unique<mtc::stages::MoveRelative>("forward", cartesian_planner);
+  stage_test_movement->properties().set("marker_ns", "forward");
+  stage_test_movement->properties().set("link", hand_frame);
+  stage_test_movement->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
+  stage_test_movement->setMinMaxDistance(0.1, 0.15);
 
+  geometry_msgs::msg::Vector3Stamped vec;
+  vec.header.frame_id = hand_frame;
+  vec.vector.z = 2.0;
+  stage_test_movement->setDirection(vec);
+  task.add(std::move(stage_test_movement));
   return task;
 }
 
