@@ -12,6 +12,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(mpnp_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 add_executable(koi_controller src/koi_controller.cpp)
 add_executable(omnirob_controller src/omnirob_controller.cpp)
@@ -47,6 +48,7 @@ ament_target_dependencies(
   "moveit_ros_planning_interface"
   "mpnp_interfaces"
   "nav_msgs"
+  "tf2_geometry_msgs"
 )
 
 ament_target_dependencies(
