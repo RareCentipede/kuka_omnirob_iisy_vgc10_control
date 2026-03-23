@@ -43,6 +43,26 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
   // Execute the planned place task here (not implemented)
 }
 
+mtc::Task KOIPickPlaceController::createPickTask(){
+  mtc::Task pick_task;
+  pick_task.stages()->setName("pick task");
+  pick_task.loadRobotModel(this->shared_from_this());
+
+  // Set task properties
+  pick_task.setProperty("group", arm_group_name_);
+  pick_task.setProperty("hand_group", hand_group_name_);
+  pick_task.setProperty("hand_frame", hand_frame);
+
+  return pick_task;
+}
+
+mtc::Task KOIPickPlaceController::createPlaceTask(){
+  mtc::Task place_task;
+  place_task.stages()->setName("place task");
+  place_task.loadRobotModel(this->shared_from_this());
+  return place_task;
+}
+
 int main(int argc, char **argv){
   rclcpp::init(argc, argv);
 

@@ -38,6 +38,10 @@ class KOIPickPlaceController: public rclcpp::Node{
         void setupPlanningScene();
 
     private:
+        const char *arm_group_name_ = "arm_controller";
+        const char *hand_group_name_ = "vacuum_controller";
+        const char *hand_frame = "onrobot_vgc10_base_link";
+
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
         rclcpp::CallbackGroup::SharedPtr cb_group_;
