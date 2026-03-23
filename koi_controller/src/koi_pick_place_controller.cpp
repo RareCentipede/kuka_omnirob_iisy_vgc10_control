@@ -25,16 +25,39 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
   );
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+
+  sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
+  interpolation_planner_ = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
+
+  cartesian_planner_ = std::make_shared<mtc::solvers::CartesianPath>();
+  cartesian_planner_->setMaxVelocityScalingFactor(1.0);
+  cartesian_planner_->setMaxAccelerationScalingFactor(1.0);
+  cartesian_planner_->setStepSize(.01);
 }
 
 rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::getNodeBaseInterface(){
   return this->get_node_base_interface();
 }
 
+void KOIPickPlaceController::setupPlanningScene(const mpnp_interfaces::msg::Object &object,
+                                                const geometry_msgs::msg::Pose &pose,
+                                                const char *frame_id){
+  moveit_msgs::msg::CollisionObject collision_obj;
+  collision_obj.id = object.name;
+  collision_obj.header.frame_id = frame_id;
+  collision_obj.primitives.resize(1);
+  collision_obj.primitives[0].type = shape_msgs::msg::SolidPrimitive::BOX;
+  collision_obj.primitives[0].dimensions = {0.1, 0.1, 0.1}; // Example dimensions, adjust as needed
+  collision_obj.primitive_poses.resize(1);
+  collision_obj.primitive_poses[0] = pose;
+  planning_scene_interface_.applyCollisionObject(collision_obj);
+}
+
 void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
                                     std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response){
   RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object.name.c_str());
-  // Execute the planned pick task here (not implemented)
+  current_obj_ = request->object;
+  this->setupPlanningScene(request->object, request->object.pose, request->frame_id.c_str());
 }
 
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
@@ -51,9 +74,75 @@ mtc::Task KOIPickPlaceController::createPickTask(){
   // Set task properties
   pick_task.setProperty("group", arm_group_name_);
   pick_task.setProperty("hand_group", hand_group_name_);
-  pick_task.setProperty("hand_frame", hand_frame);
+  pick_task.setProperty("hand_frame", hand_frame_);
+
+  mtc::Stage *current_state_ptr = nullptr; // Forward current_state on to grasp pose generator
+  auto stage_state_current = std::make_unique<stages::CurrentState>("current");
+  current_state_ptr = stage_state_current.get();
+  pick_task.add(std::move(stage_state_current));
+
+  // Stage move to pick
+  this->addMoveToPickStage(pick_task);
+  this->addApproachObjectStage(pick_task);
+  this->addSampleGraspStage(pick_task, current_state_ptr);
 
   return pick_task;
+}
+
+void KOIPickPlaceController::addMoveToPickStage(mtc::Task &pick_task){
+  // Stage move to pick
+  auto stage_move_to_pick = std::make_unique<stages::Connect>(
+    "move to pick",
+    stages::Connect::GroupPlannerVector{{
+        arm_group_name_,
+        sampling_planner_
+    }}
+  );
+
+  stage_move_to_pick->setTimeout(5.0);
+  stage_move_to_pick->properties().configureInitFrom(mtc::Stage::PARENT);
+  pick_task.add(std::move(stage_move_to_pick));
+}
+
+void KOIPickPlaceController::addApproachObjectStage(mtc::Task &pick_task){
+  // Approach object
+  auto stage_approach = std::make_unique<stages::MoveRelative>("approach object", cartesian_planner_);
+  stage_approach->properties().set("marker_ns", "approach_object");
+  stage_approach->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
+  stage_approach->setMinMaxDistance(0.1, 0.3);
+
+  geometry_msgs::msg::Vector3Stamped vec;
+  vec.header.frame_id = hand_frame_;
+  vec.vector.z = 1.0;
+  stage_approach->setDirection(vec);
+  pick_task.add(std::move(stage_approach));
+}
+
+void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr){
+   // Sample grasp pose
+  auto stage_sample_grasp = std::make_unique<stages::GenerateGraspPose>("generate grasp pose");
+  stage_sample_grasp->properties().configureInitFrom(mtc::Stage::PARENT);
+  stage_sample_grasp->properties().set("marker_ns", "grasp_pose");
+  stage_sample_grasp->setObject(current_obj_.name);
+  stage_sample_grasp->setAngleDelta(M_PI / 12);
+  stage_sample_grasp->setMonitoredStage(current_state_ptr); // Hook into current state
+
+  const std::string box_link = current_obj_.name + '/' + "base_link";
+  geometry_msgs::msg::TransformStamped grasp_frame_tf = tf_buffer_->lookupTransform(
+      hand_frame_,
+      box_link,
+      this->now(),
+      tf2::durationFromSec(1.0));
+
+  Eigen::Isometry3d grasp_frame_transform = convert_geometry_tf_to_eigen(grasp_frame_tf.transform);
+
+  auto ik_wrapper = std::make_unique<stages::ComputeIK>("grasp pose IK", std::move(stage_sample_grasp));
+  ik_wrapper->setMaxIKSolutions(8);
+  ik_wrapper->setMinSolutionDistance(1.0);
+  ik_wrapper->setIKFrame(grasp_frame_transform, hand_frame_);
+  ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
+  ik_wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
+  pick_task.add(std::move(ik_wrapper));
 }
 
 mtc::Task KOIPickPlaceController::createPlaceTask(){
@@ -61,6 +150,22 @@ mtc::Task KOIPickPlaceController::createPlaceTask(){
   place_task.stages()->setName("place task");
   place_task.loadRobotModel(this->shared_from_this());
   return place_task;
+}
+
+Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg){
+  Eigen::Isometry3d grasp_frame_transform;
+  Eigen::Quaterniond quat(
+    transform_msg.rotation.x,
+    transform_msg.rotation.y,
+    transform_msg.rotation.z,
+    transform_msg.rotation.w);
+
+  grasp_frame_transform.translation().x() = transform_msg.translation.x;
+  grasp_frame_transform.translation().y() = transform_msg.translation.y;
+  grasp_frame_transform.translation().z() = transform_msg.translation.z;
+  grasp_frame_transform.linear() = quat.toRotationMatrix();
+
+  return grasp_frame_transform;
 }
 
 int main(int argc, char **argv){

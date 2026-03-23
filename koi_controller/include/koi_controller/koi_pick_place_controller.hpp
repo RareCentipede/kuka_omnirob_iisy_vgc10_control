@@ -6,6 +6,8 @@
 #include <cmath>
 #include <array>
 #include <eigen3/Eigen/Dense>
+#include <format>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose.hpp"
@@ -26,7 +28,7 @@
 #include <tf2_ros/transform_listener.hpp>
 
 namespace mtc = moveit::task_constructor;
-namespace stages = moveit::task_constructor::stages;
+namespace stages = mtc::stages;
 
 class KOIPickPlaceController: public rclcpp::Node{
     public:
@@ -35,12 +37,14 @@ class KOIPickPlaceController: public rclcpp::Node{
 
         void doPickTask();
         void doPlaceTask();
-        void setupPlanningScene();
+        void setupPlanningScene(const mpnp_interfaces::msg::Object &object, const geometry_msgs::msg::Pose &pose,
+                                const char *frame_id);
 
     private:
-        const char *arm_group_name_ = "arm_controller";
-        const char *hand_group_name_ = "vacuum_controller";
-        const char *hand_frame = "onrobot_vgc10_base_link";
+        const std::string arm_group_name_ = "arm_controller";
+        const std::string hand_group_name_ = "vacuum_controller";
+        const std::string hand_frame_ = "onrobot_vgc10_base_link";
+        mpnp_interfaces::msg::Object current_obj_;
 
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -57,9 +61,17 @@ class KOIPickPlaceController: public rclcpp::Node{
                            std::shared_ptr<mpnp_interfaces::srv::Place::Response> response);
 
         mtc::Task createPickTask();
+        void addMoveToPickStage(mtc::Task &pick_task);
+        void addApproachObjectStage(mtc::Task &pick_task);
+        void addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr);
+
         mtc::Task createPlaceTask();
-        mtc::Task pick_task_;
-        mtc::Task place_task_;
+
+        mtc::solvers::PipelinePlannerPtr sampling_planner_;
+        mtc::solvers::JointInterpolationPlannerPtr interpolation_planner_;
+        mtc::solvers::CartesianPathPtr cartesian_planner_;
 };
+
+Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg);
 
 #endif  // KOI_PICK_PLACE_CONTROLLER_HPP_
