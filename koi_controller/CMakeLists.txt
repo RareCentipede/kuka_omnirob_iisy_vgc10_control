@@ -24,10 +24,14 @@ foreach(Dependency IN ITEMS ${PACKAGE_INCLUDE_DEPENDS})
 endforeach()
 
 add_executable(koi_controller src/koi_controller.cpp)
+add_executable(koi_pick_place_controller src/koi_pick_place_controller.cpp)
 add_executable(omnirob_controller src/omnirob_controller.cpp)
 add_executable(iisy_arm_controller src/iisy_arm_controller.cpp)
 
 target_include_directories(koi_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+target_include_directories(koi_pick_place_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 target_include_directories(omnirob_controller PUBLIC
@@ -38,10 +42,15 @@ target_include_directories(iisy_arm_controller PUBLIC
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
 target_compile_features(koi_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_compile_features(koi_pick_place_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 target_compile_features(omnirob_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 target_compile_features(iisy_arm_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 
 ament_target_dependencies(koi_controller
+  ${PACKAGE_INCLUDE_DEPENDS}
+)
+
+ament_target_dependencies(koi_pick_place_controller
   ${PACKAGE_INCLUDE_DEPENDS}
 )
 
@@ -53,7 +62,7 @@ ament_target_dependencies(omnirob_controller
   ${PACKAGE_INCLUDE_DEPENDS}
 )
 
-install(TARGETS koi_controller omnirob_controller iisy_arm_controller
+install(TARGETS koi_controller omnirob_controller iisy_arm_controller koi_pick_place_controller
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
