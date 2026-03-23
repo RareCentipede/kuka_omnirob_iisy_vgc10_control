@@ -33,6 +33,8 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
   cartesian_planner_->setMaxVelocityScalingFactor(1.0);
   cartesian_planner_->setMaxAccelerationScalingFactor(1.0);
   cartesian_planner_->setStepSize(.01);
+
+  attach_object_stage_ = nullptr;
 }
 
 rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::getNodeBaseInterface(){
@@ -58,12 +60,42 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
   RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object.name.c_str());
   current_obj_ = request->object;
   this->setupPlanningScene(request->object, request->object.pose, request->frame_id.c_str());
+
+  bool success = this->doPickTask();
+  response->success = success;
+  response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
 
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
                                      std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
   RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object.name.c_str());
   // Execute the planned place task here (not implemented)
+}
+
+bool KOIPickPlaceController::doPickTask(){
+  pick_task_ = this->createPickTask();
+
+  try{
+    pick_task_.init();
+  }
+  catch (mtc::InitStageException &e){
+    RCLCPP_ERROR(this->get_logger(), "Failed to initialize pick task: %s", e.what());
+    return false;
+  }
+
+  if (!pick_task_.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan pick task");
+    return false;
+  }
+  pick_task_.introspection().publishSolution(*pick_task_.solutions().front());
+
+  auto result = pick_task_.execute(*pick_task_.solutions().front());
+  if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute pick task");
+    return false;
+  }
+
+  return true;
 }
 
 mtc::Task KOIPickPlaceController::createPickTask(){
@@ -81,10 +113,14 @@ mtc::Task KOIPickPlaceController::createPickTask(){
   current_state_ptr = stage_state_current.get();
   pick_task.add(std::move(stage_state_current));
 
+  attach_object_stage_ = nullptr; // Will be set in addAttachObjectStage
+
   // Stage move to pick
   this->addMoveToPickStage(pick_task);
   this->addApproachObjectStage(pick_task);
   this->addSampleGraspStage(pick_task, current_state_ptr);
+  this->addAttachObjectStage(pick_task);
+  this->addLiftObjectStage(pick_task);
 
   return pick_task;
 }
@@ -143,6 +179,38 @@ void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stag
   ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
   ik_wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
   pick_task.add(std::move(ik_wrapper));
+}
+
+void KOIPickPlaceController::addAttachObjectStage(mtc::Task &pick_task){
+  auto stage_modify_scene = std::make_unique<stages::ModifyPlanningScene>("allow collision (hand, obj)");
+  stage_modify_scene->allowCollisions(
+    current_obj_.name,
+    pick_task.getRobotModel()
+        ->getJointModelGroup(hand_group_name_)
+        ->getLinkModelNamesWithCollisionGeometry(),
+        true
+  );
+  pick_task.add(std::move(stage_modify_scene));
+
+  auto stage_attach = std::make_unique<stages::ModifyPlanningScene>("attach obj");
+  stage_attach->attachObject(current_obj_.name, hand_frame_);
+  attach_object_stage_ = stage_attach.get();
+  pick_task.add(std::move(stage_attach));
+}
+
+void KOIPickPlaceController::addLiftObjectStage(mtc::Task &pick_task){
+  auto stage_lift = std::make_unique<mtc::stages::MoveRelative>("lift object", cartesian_planner_);
+  stage_lift->properties().configureInitFrom(mtc::Stage::PARENT, { "group" });
+  stage_lift->setMinMaxDistance(0.1, 0.3);
+  stage_lift->setIKFrame(hand_frame_);
+  stage_lift->properties().set("marker_ns", "lift_object");
+
+  // Set upward direction
+  geometry_msgs::msg::Vector3Stamped vec;
+  vec.header.frame_id = "world";
+  vec.vector.z = 1.0;
+  stage_lift->setDirection(vec);
+  pick_task.add(std::move(stage_lift));
 }
 
 mtc::Task KOIPickPlaceController::createPlaceTask(){

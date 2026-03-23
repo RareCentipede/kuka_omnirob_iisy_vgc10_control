@@ -35,7 +35,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         KOIPickPlaceController(const rclcpp::NodeOptions &options);
         rclcpp::node_interfaces::NodeBaseInterface::SharedPtr getNodeBaseInterface();
 
-        void doPickTask();
+        bool doPickTask();
         void doPlaceTask();
         void setupPlanningScene(const mpnp_interfaces::msg::Object &object, const geometry_msgs::msg::Pose &pose,
                                 const char *frame_id);
@@ -45,31 +45,37 @@ class KOIPickPlaceController: public rclcpp::Node{
         const std::string hand_group_name_ = "vacuum_controller";
         const std::string hand_frame_ = "onrobot_vgc10_base_link";
         mpnp_interfaces::msg::Object current_obj_;
-
+        
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
         rclcpp::CallbackGroup::SharedPtr cb_group_;
         rclcpp::SubscriptionOptions subscription_options_;
-
+        
         rclcpp::Service<mpnp_interfaces::srv::Pick>::SharedPtr pick_service_;
         rclcpp::Service<mpnp_interfaces::srv::Place>::SharedPtr place_service_;
         moveit::planning_interface::PlanningSceneInterface planning_scene_interface_;
-
+        
         void pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
-                          std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response);
+            std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response);
         void place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
-                           std::shared_ptr<mpnp_interfaces::srv::Place::Response> response);
+                std::shared_ptr<mpnp_interfaces::srv::Place::Response> response);
 
+        mtc::Stage* attach_object_stage_;
         mtc::Task createPickTask();
         void addMoveToPickStage(mtc::Task &pick_task);
         void addApproachObjectStage(mtc::Task &pick_task);
         void addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr);
+        void addAttachObjectStage(mtc::Task &pick_task);
+        void addLiftObjectStage(mtc::Task &pick_task);
 
         mtc::Task createPlaceTask();
 
         mtc::solvers::PipelinePlannerPtr sampling_planner_;
         mtc::solvers::JointInterpolationPlannerPtr interpolation_planner_;
         mtc::solvers::CartesianPathPtr cartesian_planner_;
+
+        mtc::Task pick_task_;
+        mtc::Task place_task_;
 };
 
 Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg);
