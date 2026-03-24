@@ -40,7 +40,7 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
       geometry_msgs::msg::TransformStamped transformStamped;
       transformStamped.header.stamp = this->now();
       transformStamped.header.frame_id = "world";
-      transformStamped.child_frame_id = "platform_base_link";
+      transformStamped.child_frame_id = "odom";
       transformStamped.transform.translation.x = position[0];
       transformStamped.transform.translation.y = position[1];
       transformStamped.transform.translation.z = position[2];
@@ -50,6 +50,11 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
       transformStamped.transform.rotation.y = odom_msg.pose.pose.orientation.y;
       transformStamped.transform.rotation.z = odom_msg.pose.pose.orientation.z;
 
+      tf_broadcaster_->sendTransform(transformStamped);
+      transformStamped.header.stamp = this->now();
+      transformStamped.child_frame_id = "platform_base_link";
+      transformStamped.transform.translation.x = position[0] - 0.347000;
+      transformStamped.transform.translation.y = position[1] - 0.242000;
       tf_broadcaster_->sendTransform(transformStamped);
 }
 
@@ -81,7 +86,7 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
       vel *= request->speed; // Scale by the requested speed
 
       twist_msg.header.stamp = this->now();
-      twist_msg.header.frame_id = "omnirob_base_link"; // Assuming the frame of reference is base
+      twist_msg.header.frame_id = "platform_base_link"; // Assuming the frame of reference is base
       twist_msg.twist.linear.x = vel[0];
       twist_msg.twist.linear.y = vel[1];
       twist_msg.twist.linear.z = vel[2];
