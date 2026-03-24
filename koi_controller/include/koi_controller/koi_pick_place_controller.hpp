@@ -80,6 +80,4 @@ class KOIPickPlaceController: public rclcpp::Node{
         mtc::Task place_task_;
 };
 
-Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg);
-
 #endif  // KOI_PICK_PLACE_CONTROLLER_HPP_

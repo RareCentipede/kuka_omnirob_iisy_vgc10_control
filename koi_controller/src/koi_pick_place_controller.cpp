@@ -120,8 +120,8 @@ mtc::Task KOIPickPlaceController::createPickTask(){
   this->addMoveToPickStage(pick_task);
   this->addApproachObjectStage(pick_task);
   this->addSampleGraspStage(pick_task, current_state_ptr);
-  // this->addAttachObjectStage(pick_task);
-  // this->addLiftObjectStage(pick_task);
+  this->addAttachObjectStage(pick_task);
+  this->addLiftObjectStage(pick_task);
 
   return pick_task;
 }
@@ -163,31 +163,32 @@ void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stag
   stage_sample_grasp->properties().set("marker_ns", "grasp_pose");
 
   geometry_msgs::msg::PoseStamped obj_pose;
-  obj_pose.header.frame_id = box_link;
-  obj_pose.pose.position.x = 0.0;
-  obj_pose.pose.position.y = 0.0;
-  obj_pose.pose.position.z = 0.05;
-  // obj_pose.pose.position.z += 0.05; // Add a small offset to ensure the grasp pose is above the object
-  obj_pose.pose.orientation.x = 0.0;
-  obj_pose.pose.orientation.y = 0.0;
-  obj_pose.pose.orientation.z = 0.0;
-  obj_pose.pose.orientation.w = 1.0;
+  obj_pose.header.frame_id = "world";
+  // obj_pose.pose.position.x = 0.0;
+  // obj_pose.pose.position.y = 0.0;
+  // obj_pose.pose.position.z = 0.05;
+  // // obj_pose.pose.position.z += 0.05; // Add a small offset to ensure the grasp pose is above the object
+  // obj_pose.pose.orientation.x = 0.0;
+  // obj_pose.pose.orientation.y = 0.0;
+  // obj_pose.pose.orientation.z = 0.0;
+  // obj_pose.pose.orientation.w = 1.0;
+  obj_pose.pose = current_obj_.pose; // Use the actual object pose from the request
   stage_sample_grasp->setPose(obj_pose);
   stage_sample_grasp->setMonitoredStage(current_state_ptr); // Forward current state to grasp pose generator for informed sampling
 
   geometry_msgs::msg::TransformStamped grasp_frame_tf = tf_buffer_->lookupTransform(
+    "world",
     hand_frame_,
-    box_link,
     this->now(),
     tf2::durationFromSec(1.0)
   );
 
   Eigen::Isometry3d grasp_frame_transform = tf2::transformToEigen(grasp_frame_tf);
-  // Eigen::Isometry3d grasp_frame_transform = convert_geometry_tf_to_eigen(grasp_frame_tf.transform);
 
   auto ik_wrapper = std::make_unique<stages::ComputeIK>("grasp pose IK", std::move(stage_sample_grasp));
   ik_wrapper->setMaxIKSolutions(8);
   ik_wrapper->setMinSolutionDistance(1.0);
+
   ik_wrapper->setIKFrame(grasp_frame_transform, hand_frame_);
   ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
   ik_wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
@@ -245,22 +246,6 @@ KOIPickPlaceController::~KOIPickPlaceController(){
   cartesian_planner_.reset();
   tf_listener_.reset();
   tf_buffer_.reset();
-}
-
-Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg){
-  Eigen::Isometry3d grasp_frame_transform;
-  Eigen::Quaterniond quat(
-    transform_msg.rotation.x,
-    transform_msg.rotation.y,
-    transform_msg.rotation.z,
-    transform_msg.rotation.w);
-
-  grasp_frame_transform.translation().x() = transform_msg.translation.x;
-  grasp_frame_transform.translation().y() = transform_msg.translation.y;
-  grasp_frame_transform.translation().z() = transform_msg.translation.z;
-  grasp_frame_transform.linear() = quat.matrix();
-
-  return grasp_frame_transform;
 }
 
 int main(int argc, char **argv){
