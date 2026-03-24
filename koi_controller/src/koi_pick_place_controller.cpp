@@ -1,8 +1,7 @@
 #include "koi_controller/koi_pick_place_controller.hpp"
 
 KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &options)
-: Node("koi_pick_place_controller", options)
-{
+: Node("koi_pick_place_controller", options){
   RCLCPP_INFO(this->get_logger(), "Hello KOIPickPlaceController!");
 
   cb_group_ = this->create_callback_group(
@@ -25,8 +24,9 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
   );
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  tf_buffer_->setUsingDedicatedThread(true);
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
 
-  sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
   interpolation_planner_ = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
 
   cartesian_planner_ = std::make_shared<mtc::solvers::CartesianPath>();
@@ -42,8 +42,7 @@ rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::ge
 }
 
 void KOIPickPlaceController::setupPlanningScene(const mpnp_interfaces::msg::Object &object,
-                                                const geometry_msgs::msg::Pose &pose,
-                                                const char *frame_id){
+                                                const geometry_msgs::msg::Pose &pose, const char *frame_id){
   moveit_msgs::msg::CollisionObject collision_obj;
   collision_obj.id = object.name;
   collision_obj.header.frame_id = frame_id;
@@ -56,22 +55,22 @@ void KOIPickPlaceController::setupPlanningScene(const mpnp_interfaces::msg::Obje
 }
 
 void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
-                                    std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response){
-  RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object.name.c_str());
-  current_obj_ = request->object;
-  this->setupPlanningScene(request->object, request->object.pose, request->frame_id.c_str());
-
-  bool success = this->doPickTask();
-  response->success = success;
-  response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
+  std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response){
+    RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object.name.c_str());
+    current_obj_ = request->object;
+    this->setupPlanningScene(request->object, request->object.pose, request->frame_id.c_str());
+    
+    bool success = this->doPickTask();
+    response->success = success;
+    response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
-
+    
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
-                                     std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
-  RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object.name.c_str());
-  // Execute the planned place task here (not implemented)
+  std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
+    RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object.name.c_str());
+    // Execute the planned place task here (not implemented)
 }
-
+  
 bool KOIPickPlaceController::doPickTask(){
   pick_task_ = this->createPickTask();
 
@@ -79,7 +78,8 @@ bool KOIPickPlaceController::doPickTask(){
     pick_task_.init();
   }
   catch (mtc::InitStageException &e){
-    RCLCPP_ERROR(this->get_logger(), "Failed to initialize pick task: %s", e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize pick task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), e);
     return false;
   }
 
@@ -99,14 +99,15 @@ bool KOIPickPlaceController::doPickTask(){
 }
 
 mtc::Task KOIPickPlaceController::createPickTask(){
+  sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
   mtc::Task pick_task;
   pick_task.stages()->setName("pick task");
   pick_task.loadRobotModel(this->shared_from_this());
 
   // Set task properties
   pick_task.setProperty("group", arm_group_name_);
-  pick_task.setProperty("hand_group", hand_group_name_);
-  pick_task.setProperty("hand_frame", hand_frame_);
+  pick_task.setProperty("eef", "vacuum");
+  pick_task.setProperty("ik_frame", hand_frame_);
 
   mtc::Stage *current_state_ptr = nullptr; // Forward current_state on to grasp pose generator
   auto stage_state_current = std::make_unique<stages::CurrentState>("current");
@@ -115,7 +116,7 @@ mtc::Task KOIPickPlaceController::createPickTask(){
 
   attach_object_stage_ = nullptr; // Will be set in addAttachObjectStage
 
-  // Stage move to pick
+  // Stages
   this->addMoveToPickStage(pick_task);
   this->addApproachObjectStage(pick_task);
   this->addSampleGraspStage(pick_task, current_state_ptr);
@@ -156,19 +157,23 @@ void KOIPickPlaceController::addApproachObjectStage(mtc::Task &pick_task){
 
 void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr){
    // Sample grasp pose
-  auto stage_sample_grasp = std::make_unique<stages::GenerateGraspPose>("generate grasp pose");
+  auto stage_sample_grasp = std::make_unique<stages::GeneratePose>("generate grasp pose");
   stage_sample_grasp->properties().configureInitFrom(mtc::Stage::PARENT);
   stage_sample_grasp->properties().set("marker_ns", "grasp_pose");
-  stage_sample_grasp->setObject(current_obj_.name);
-  stage_sample_grasp->setAngleDelta(M_PI / 12);
-  stage_sample_grasp->setMonitoredStage(current_state_ptr); // Hook into current state
+
+  geometry_msgs::msg::PoseStamped obj_pose;
+  obj_pose.header.frame_id = "world";
+  obj_pose.pose = current_obj_.pose;
+  stage_sample_grasp->setPose(obj_pose);
+  stage_sample_grasp->setMonitoredStage(current_state_ptr); // Forward current state to grasp pose generator for informed sampling
 
   const std::string box_link = current_obj_.name + '/' + "base_link";
   geometry_msgs::msg::TransformStamped grasp_frame_tf = tf_buffer_->lookupTransform(
       hand_frame_,
       box_link,
       this->now(),
-      tf2::durationFromSec(1.0));
+      tf2::durationFromSec(1.0)
+  );
 
   Eigen::Isometry3d grasp_frame_transform = convert_geometry_tf_to_eigen(grasp_frame_tf.transform);
 
@@ -218,6 +223,20 @@ mtc::Task KOIPickPlaceController::createPlaceTask(){
   place_task.stages()->setName("place task");
   place_task.loadRobotModel(this->shared_from_this());
   return place_task;
+}
+
+KOIPickPlaceController::~KOIPickPlaceController(){
+  RCLCPP_INFO(this->get_logger(), "Shutting down KOIPickPlaceController");
+  attach_object_stage_ = nullptr; // Just in case, to avoid dangling pointer
+
+  pick_task_.clear();
+  place_task_.clear();
+
+  sampling_planner_.reset();
+  interpolation_planner_.reset();
+  cartesian_planner_.reset();
+  tf_listener_.reset();
+  tf_buffer_.reset();
 }
 
 Eigen::Isometry3d convert_geometry_tf_to_eigen(const geometry_msgs::msg::Transform &transform_msg){

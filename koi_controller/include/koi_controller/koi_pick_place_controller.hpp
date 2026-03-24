@@ -33,6 +33,7 @@ namespace stages = mtc::stages;
 class KOIPickPlaceController: public rclcpp::Node{
     public:
         KOIPickPlaceController(const rclcpp::NodeOptions &options);
+        ~KOIPickPlaceController();
         rclcpp::node_interfaces::NodeBaseInterface::SharedPtr getNodeBaseInterface();
 
         bool doPickTask();
@@ -45,7 +46,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         const std::string hand_group_name_ = "vacuum_controller";
         const std::string hand_frame_ = "onrobot_vgc10_base_link";
         mpnp_interfaces::msg::Object current_obj_;
-        
+
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
         rclcpp::CallbackGroup::SharedPtr cb_group_;
