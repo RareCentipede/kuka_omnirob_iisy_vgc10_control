@@ -43,20 +43,20 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
   position[0] = odom_msg.pose.pose.position.x;
   position[1] = odom_msg.pose.pose.position.y;
   position[2] = odom_msg.pose.pose.position.z;
-  position[3] = odom_msg.pose.pose.orientation.w; // Assuming we only care about the yaw component for simplicity
+  position[3] = odom_msg.pose.pose.orientation.w;
 
   geometry_msgs::msg::TransformStamped transformStamped;
   transformStamped.header.stamp = this->now();
   transformStamped.header.frame_id = "odom";
   transformStamped.child_frame_id = "platform_base_link";
-  transformStamped.transform.translation.x = position[0];
-  transformStamped.transform.translation.y = position[1];
-  transformStamped.transform.translation.z = position[2];
-  transformStamped.transform.rotation.w = position[3];
+  transformStamped.transform.translation.x = odom_msg.pose.pose.position.x;
+  transformStamped.transform.translation.y = odom_msg.pose.pose.position.y;
+  transformStamped.transform.translation.z = odom_msg.pose.pose.position.z;
 
   transformStamped.transform.rotation.x = odom_msg.pose.pose.orientation.x;
   transformStamped.transform.rotation.y = odom_msg.pose.pose.orientation.y;
   transformStamped.transform.rotation.z = odom_msg.pose.pose.orientation.z;
+  transformStamped.transform.rotation.w = odom_msg.pose.pose.orientation.w;
 
   tf_broadcaster_->sendTransform(transformStamped);
 }
