@@ -24,7 +24,10 @@ foreach(Dependency IN ITEMS ${PACKAGE_INCLUDE_DEPENDS})
 endforeach()
 
 add_executable(koi_controller src/koi_controller.cpp)
-add_executable(koi_pick_place_controller src/koi_pick_place_controller.cpp)
+add_executable(koi_pick_place_controller
+               src/koi_pick_place_controller.cpp
+               src/koi_pick_place_stages.cpp
+               src/koi_pick_place_task.cpp)
 add_executable(omnirob_controller src/omnirob_controller.cpp)
 add_executable(iisy_arm_controller src/iisy_arm_controller.cpp)
 
