@@ -18,6 +18,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "mpnp_interfaces/srv/pick.hpp"
 #include "mpnp_interfaces/srv/place.hpp"
+#include "mpnp_interfaces/msg/object.hpp"
 
 #include <moveit/planning_scene/planning_scene.hpp>
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
@@ -41,15 +42,20 @@ class KOIPickPlaceController: public rclcpp::Node{
 
         bool doPickTask();
         void doPlaceTask();
-        void setupPlanningScene(const mpnp_interfaces::msg::Object &object, const geometry_msgs::msg::Pose &pose,
+        void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose,
                                 const char *frame_id);
 
     private:
+        struct Object{
+            std::string name;
+            geometry_msgs::msg::Pose pose;
+        };
+
         const std::string arm_group_name_ = "arm_controller";
         const std::string hand_group_name_ = "vacuum_controller";
         const std::string hand_frame_ = "suction";
 
-        mpnp_interfaces::msg::Object current_obj_;
+        Object current_obj_;
         geometry_msgs::msg::PoseStamped grasp_pose_;
 
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

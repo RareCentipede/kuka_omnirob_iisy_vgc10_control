@@ -49,10 +49,11 @@ rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::ge
   return this->get_node_base_interface();
 }
 
-void KOIPickPlaceController::setupPlanningScene(const mpnp_interfaces::msg::Object &object,
-                                                const geometry_msgs::msg::Pose &pose, const char *frame_id){
+void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
+                                                const geometry_msgs::msg::Pose &pose,
+                                                const char *frame_id){
   moveit_msgs::msg::CollisionObject collision_obj;
-  collision_obj.id = object.name;
+  collision_obj.id = object_name;
   collision_obj.header.frame_id = frame_id;
   collision_obj.primitives.resize(1);
   collision_obj.primitives[0].type = shape_msgs::msg::SolidPrimitive::BOX;
@@ -64,21 +65,56 @@ void KOIPickPlaceController::setupPlanningScene(const mpnp_interfaces::msg::Obje
 
 void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
   std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response){
-    RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object.name.c_str());
-    current_obj_ = request->object;
-    this->setupPlanningScene(request->object, request->object.pose, request->frame_id.c_str());
-    
+    RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
+    const std::string box_link = request->object_name + "/base_link";
+
+    geometry_msgs::msg::TransformStamped box_tf;
+    try{
+      // World to object/base_link transformation gives the object's pose in the world frame
+      box_tf = tf_buffer_->lookupTransform(
+        "world",
+        box_link,
+        this->now(),
+        tf2::durationFromSec(1.0)
+      );
+    }
+    catch (tf2::TransformException &ex){
+      RCLCPP_ERROR(this->get_logger(), "Could not get transform for object %s: %s", request->object_name.c_str(), ex.what());
+      response->success = false;
+      response->message = "Failed to get object transform";
+      return;
+    }
+
+    current_obj_.name = request->object_name;
+    current_obj_.pose.position = [&box_tf](){
+      geometry_msgs::msg::Point p;
+      p.x = box_tf.transform.translation.x;
+      p.y = box_tf.transform.translation.y;
+      p.z = box_tf.transform.translation.z+0.25;
+      return p;
+    }();
+    current_obj_.pose.orientation = [&box_tf](){
+      geometry_msgs::msg::Quaternion q;
+      q.x = box_tf.transform.rotation.x;
+      q.y = box_tf.transform.rotation.y;
+      q.z = box_tf.transform.rotation.z;
+      q.w = box_tf.transform.rotation.w;
+      return q;
+    }();
+
+    this->setupPlanningScene(request->object_name, current_obj_.pose, request->frame_id.c_str());
+
     bool success = this->doPickTask();
     response->success = success;
     response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
-    
+
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
   std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
-    RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object.name.c_str());
+    RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object_name.c_str());
     // Execute the planned place task here (not implemented)
 }
-  
+
 bool KOIPickPlaceController::doPickTask(){
   pick_task_ = this->createPickTask();
 
@@ -172,6 +208,11 @@ void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stag
 
   grasp_pose_.pose.position = current_obj_.pose.position;
   grasp_pose_.pose.position.z += 0.1; // Ensure the grasp pose is above the object
+
+  // Print the grasp pose for debugging
+  RCLCPP_INFO(this->get_logger(), "Grasp pose: \nPosition: x=%.2f, y=%.2f, z=%.2f \nOrientation: x=%.2f, y=%.2f, z=%.2f, w=%.2f", 
+    grasp_pose_.pose.position.x, grasp_pose_.pose.position.y, grasp_pose_.pose.position.z,
+    grasp_pose_.pose.orientation.x, grasp_pose_.pose.orientation.y, grasp_pose_.pose.orientation.z, grasp_pose_.pose.orientation.w);
 
   stage_sample_grasp->setPose(grasp_pose_);
   stage_sample_grasp->setMonitoredStage(current_state_ptr); // Forward current state to grasp pose generator for informed sampling
