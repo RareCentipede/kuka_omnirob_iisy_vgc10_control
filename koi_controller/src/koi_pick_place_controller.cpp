@@ -1,4 +1,5 @@
 #include "koi_controller/koi_pick_place_controller.hpp"
+#include <format>
 
 KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &options)
 : Node("koi_pick_place_controller", options){
@@ -63,56 +64,70 @@ void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
   planning_scene_interface_.applyCollisionObject(collision_obj);
 }
 
+std::optional<tf2::TransformException> KOIPickPlaceController::assign_target_obj_pose(const std::string &object_name,
+                                                                                      const std::string &obj_frame_name){
+  geometry_msgs::msg::TransformStamped box_tf;
+  try{
+    // World to object/base_link transformation gives the object's pose in the world frame
+    box_tf = tf_buffer_->lookupTransform(
+      "world",
+      obj_frame_name,
+      this->now(),
+      tf2::durationFromSec(1.0)
+    );
+  }
+  catch (tf2::TransformException &ex){
+    RCLCPP_ERROR(this->get_logger(), "Could not get transform for object %s: %s", object_name.c_str(), ex.what());
+    return std::make_optional(ex);
+  }
+
+  current_obj_.name = object_name;
+  current_obj_.pose.position = [&box_tf](){
+    geometry_msgs::msg::Point p;
+    p.x = box_tf.transform.translation.x;
+    p.y = box_tf.transform.translation.y;
+    p.z = box_tf.transform.translation.z+0.25;
+    return p;
+  }();
+  current_obj_.pose.orientation = [&box_tf](){
+    geometry_msgs::msg::Quaternion q;
+    q.x = box_tf.transform.rotation.x;
+    q.y = box_tf.transform.rotation.y;
+    q.z = box_tf.transform.rotation.z;
+    q.w = box_tf.transform.rotation.w;
+    return q;
+  }();
+
+  return std::nullopt; // No exception, pose assigned successfully
+}
+
 void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
-  std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response){
-    RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
-    const std::string box_link = request->object_name + "/base_link";
+                                          std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response)
+{
+  RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
+  const std::string box_link = request->object_name + "/base_link";
 
-    geometry_msgs::msg::TransformStamped box_tf;
-    try{
-      // World to object/base_link transformation gives the object's pose in the world frame
-      box_tf = tf_buffer_->lookupTransform(
-        "world",
-        box_link,
-        this->now(),
-        tf2::durationFromSec(1.0)
-      );
-    }
-    catch (tf2::TransformException &ex){
-      RCLCPP_ERROR(this->get_logger(), "Could not get transform for object %s: %s", request->object_name.c_str(), ex.what());
-      response->success = false;
-      response->message = "Failed to get object transform";
-      return;
-    }
+  std::optional<tf2::TransformException> tf_exception = this->assign_target_obj_pose(request->object_name, box_link);
+  if (tf_exception.has_value()) {
+    response->success = false;
+    response->message = std::format("Failed to get object pose for {}: {}", request->object_name, tf_exception->what());
+    return;
+  }
+  this->setupPlanningScene(request->object_name, current_obj_.pose, request->frame_id.c_str());
 
-    current_obj_.name = request->object_name;
-    current_obj_.pose.position = [&box_tf](){
-      geometry_msgs::msg::Point p;
-      p.x = box_tf.transform.translation.x;
-      p.y = box_tf.transform.translation.y;
-      p.z = box_tf.transform.translation.z+0.25;
-      return p;
-    }();
-    current_obj_.pose.orientation = [&box_tf](){
-      geometry_msgs::msg::Quaternion q;
-      q.x = box_tf.transform.rotation.x;
-      q.y = box_tf.transform.rotation.y;
-      q.z = box_tf.transform.rotation.z;
-      q.w = box_tf.transform.rotation.w;
-      return q;
-    }();
-
-    this->setupPlanningScene(request->object_name, current_obj_.pose, request->frame_id.c_str());
-
-    bool success = this->doPickTask();
-    response->success = success;
-    response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
+  bool success = this->doPickTask();
+  response->success = success;
+  response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
 
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
   std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
     RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object_name.c_str());
-    // Execute the planned place task here (not implemented)
+
+    // Just detach object for now
+    bool success = this->doPlaceTask();
+    response->success = success;
+    response->message = success ? "Place task executed successfully" : "Failed to execute place task";
 }
 
 KOIPickPlaceController::~KOIPickPlaceController(){

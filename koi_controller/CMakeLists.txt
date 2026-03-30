@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(koi_controller)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -44,10 +47,10 @@ target_include_directories(iisy_arm_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
-target_compile_features(koi_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_compile_features(koi_pick_place_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_compile_features(omnirob_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_compile_features(iisy_arm_controller PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_compile_features(koi_controller PUBLIC c_std_99)  # Require C99 and C++17
+target_compile_features(koi_pick_place_controller PUBLIC c_std_99)  # Require C99 and C++17
+target_compile_features(omnirob_controller PUBLIC c_std_99)  # Require C99 and C++17
+target_compile_features(iisy_arm_controller PUBLIC c_std_99)  # Require C99 and C++17
 
 ament_target_dependencies(koi_controller
   ${PACKAGE_INCLUDE_DEPENDS}

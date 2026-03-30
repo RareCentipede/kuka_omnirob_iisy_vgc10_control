@@ -83,10 +83,3 @@ void KOIPickPlaceController::addLiftObjectStage(mtc::Task &pick_task){
   stage_lift->setDirection(vec);
   pick_task.add(std::move(stage_lift));
 }
-
-mtc::Task KOIPickPlaceController::createPlaceTask(){
-  mtc::Task place_task;
-  place_task.stages()->setName("place task");
-  place_task.loadRobotModel(this->shared_from_this());
-  return place_task;
-}

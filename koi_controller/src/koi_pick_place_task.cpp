@@ -54,3 +54,55 @@ mtc::Task KOIPickPlaceController::createPickTask(){
 
   return pick_task;
 }
+
+bool KOIPickPlaceController::doPlaceTask(){
+  place_task_ = this->createPlaceTask(current_obj_.name);
+
+  try{
+    place_task_.init();
+  }
+  catch (mtc::InitStageException &e){
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize place task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), e);
+    return false;
+  }
+
+  if (!place_task_.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan place task");
+    return false;
+  }
+  place_task_.introspection().publishSolution(*place_task_.solutions().front());
+
+  auto result = place_task_.execute(*place_task_.solutions().front());
+  if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute place task");
+    return false;
+  }
+
+  planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+  return true;
+}
+
+mtc::Task KOIPickPlaceController::createPlaceTask(const std::string &object_name){
+  mtc::Task place_task;
+  place_task.stages()->setName("place task");
+  place_task.loadRobotModel(this->shared_from_this());
+
+  // Set task properties
+  place_task.setProperty("group", arm_group_name_);
+  place_task.setProperty("eef", "vacuum");
+  place_task.setProperty("ik_frame", hand_frame_);
+
+  mtc::Stage *current_state_ptr = nullptr; // Forward current_state on to grasp pose generator
+  auto stage_state_current = std::make_unique<stages::CurrentState>("current");
+  current_state_ptr = stage_state_current.get();
+  place_task.add(std::move(stage_state_current));
+
+  attach_object_stage_ = nullptr; // Will be set in addAttachObjectStage
+
+  auto stage_detach = std::make_unique<stages::ModifyPlanningScene>("detach object");
+  stage_detach->detachObject(object_name, hand_frame_);
+  place_task.add(std::move(stage_detach));
+
+  return place_task;
+}
