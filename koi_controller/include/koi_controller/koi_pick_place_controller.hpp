@@ -11,6 +11,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/quaternion.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -45,8 +47,10 @@ class KOIPickPlaceController: public rclcpp::Node{
     private:
         const std::string arm_group_name_ = "arm_controller";
         const std::string hand_group_name_ = "vacuum_controller";
-        const std::string hand_frame_ = "onrobot_vgc10_base_link";
+        const std::string hand_frame_ = "suction";
+
         mpnp_interfaces::msg::Object current_obj_;
+        geometry_msgs::msg::PoseStamped grasp_pose_;
 
         std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

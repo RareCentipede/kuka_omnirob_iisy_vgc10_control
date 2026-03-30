@@ -4,11 +4,13 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
 : Node("koi_pick_place_controller", options){
   RCLCPP_INFO(this->get_logger(), "Hello KOIPickPlaceController!");
 
+  // Callback group
   cb_group_ = this->create_callback_group(
       rclcpp::CallbackGroupType::Reentrant
   );
   subscription_options_.callback_group = cb_group_;
 
+  // Services
   pick_service_ = this->create_service<mpnp_interfaces::srv::Pick>(
     "/koi_pick_place_controller/pick", std::bind(&KOIPickPlaceController::pick_service, this,
       std::placeholders::_1, std::placeholders::_2),
@@ -23,16 +25,22 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
       cb_group_
   );
 
+  // TF2 setup
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_buffer_->setUsingDedicatedThread(true);
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
 
+  // Planners
   interpolation_planner_ = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
 
   cartesian_planner_ = std::make_shared<mtc::solvers::CartesianPath>();
   cartesian_planner_->setMaxVelocityScalingFactor(1.0);
   cartesian_planner_->setMaxAccelerationScalingFactor(1.0);
   cartesian_planner_->setStepSize(.01);
+
+  // Set up grasp pose orientation and frame
+  grasp_pose_.header.frame_id = "world";
+  grasp_pose_.pose.orientation = tf2::toMsg(tf2::Quaternion(0, 1.0, 0, 0)); // Points the gripper downwards
 
   attach_object_stage_ = nullptr;
 }
@@ -147,6 +155,7 @@ void KOIPickPlaceController::addApproachObjectStage(mtc::Task &pick_task){
   stage_approach->properties().set("marker_ns", "approach_object");
   stage_approach->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
   stage_approach->setMinMaxDistance(0.1, 0.3);
+  stage_approach->setIKFrame(hand_frame_);
 
   geometry_msgs::msg::Vector3Stamped vec;
   vec.header.frame_id = hand_frame_;
@@ -156,40 +165,22 @@ void KOIPickPlaceController::addApproachObjectStage(mtc::Task &pick_task){
 }
 
 void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr){
-  const std::string box_link = current_obj_.name + '/' + "base_link";
    // Sample grasp pose
   auto stage_sample_grasp = std::make_unique<stages::GeneratePose>("generate grasp pose");
   stage_sample_grasp->properties().configureInitFrom(mtc::Stage::PARENT);
   stage_sample_grasp->properties().set("marker_ns", "grasp_pose");
 
-  geometry_msgs::msg::PoseStamped obj_pose;
-  obj_pose.header.frame_id = "world";
-  // obj_pose.pose.position.x = 0.0;
-  // obj_pose.pose.position.y = 0.0;
-  // obj_pose.pose.position.z = 0.05;
-  // // obj_pose.pose.position.z += 0.05; // Add a small offset to ensure the grasp pose is above the object
-  // obj_pose.pose.orientation.x = 0.0;
-  // obj_pose.pose.orientation.y = 0.0;
-  // obj_pose.pose.orientation.z = 0.0;
-  // obj_pose.pose.orientation.w = 1.0;
-  obj_pose.pose = current_obj_.pose; // Use the actual object pose from the request
-  stage_sample_grasp->setPose(obj_pose);
+  grasp_pose_.pose.position = current_obj_.pose.position;
+  grasp_pose_.pose.position.z += 0.1; // Ensure the grasp pose is above the object
+
+  stage_sample_grasp->setPose(grasp_pose_);
   stage_sample_grasp->setMonitoredStage(current_state_ptr); // Forward current state to grasp pose generator for informed sampling
-
-  geometry_msgs::msg::TransformStamped grasp_frame_tf = tf_buffer_->lookupTransform(
-    "world",
-    hand_frame_,
-    this->now(),
-    tf2::durationFromSec(1.0)
-  );
-
-  Eigen::Isometry3d grasp_frame_transform = tf2::transformToEigen(grasp_frame_tf);
 
   auto ik_wrapper = std::make_unique<stages::ComputeIK>("grasp pose IK", std::move(stage_sample_grasp));
   ik_wrapper->setMaxIKSolutions(8);
   ik_wrapper->setMinSolutionDistance(1.0);
 
-  ik_wrapper->setIKFrame(grasp_frame_transform, hand_frame_);
+  ik_wrapper->setIKFrame(hand_frame_);
   ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
   ik_wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
   pick_task.add(std::move(ik_wrapper));
