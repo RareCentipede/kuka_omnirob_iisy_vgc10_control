@@ -50,7 +50,6 @@ class KOIPickPlaceController: public rclcpp::Node{
         bool doPickTask();
         bool doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose);
         void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose, const char *frame_id);
-        const moveit::core::RobotModelConstPtr *robot_model = nullptr;
 
     private:
         const std::string arm_group_name_ = "arm_controller";

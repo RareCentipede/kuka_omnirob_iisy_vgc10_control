@@ -64,9 +64,11 @@ void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
   planning_scene_interface_.applyCollisionObject(collision_obj);
 }
 
-std::optional<tf2::TransformException> KOIPickPlaceController::assign_target_obj_pose(const std::string &object_name,
+std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::assign_target_obj_pose(const std::string &object_name,
                                                                                       const std::string &obj_frame_name){
   geometry_msgs::msg::TransformStamped box_tf;
+  geometry_msgs::msg::Pose target_pose;
+
   try{
     // World to object/base_link transformation gives the object's pose in the world frame
     box_tf = tf_buffer_->lookupTransform(
@@ -78,18 +80,17 @@ std::optional<tf2::TransformException> KOIPickPlaceController::assign_target_obj
   }
   catch (tf2::TransformException &ex){
     RCLCPP_ERROR(this->get_logger(), "Could not get transform for object %s: %s", object_name.c_str(), ex.what());
-    return std::make_optional(ex);
+    return std::nullopt; // Return empty optional to indicate failure
   }
 
-  current_obj_.name = object_name;
-  current_obj_.pose.position = [&box_tf](){
+  target_pose.position = [&box_tf](){
     geometry_msgs::msg::Point p;
     p.x = box_tf.transform.translation.x;
     p.y = box_tf.transform.translation.y;
     p.z = box_tf.transform.translation.z+0.25;
     return p;
   }();
-  current_obj_.pose.orientation = [&box_tf](){
+  target_pose.orientation = [&box_tf](){
     geometry_msgs::msg::Quaternion q;
     q.x = box_tf.transform.rotation.x;
     q.y = box_tf.transform.rotation.y;
@@ -98,7 +99,7 @@ std::optional<tf2::TransformException> KOIPickPlaceController::assign_target_obj
     return q;
   }();
 
-  return std::nullopt; // No exception, pose assigned successfully
+  return target_pose; // No exception, pose assigned successfully
 }
 
 void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
@@ -107,13 +108,16 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
   RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
   const std::string box_link = request->object_name + "/base_link";
 
-  std::optional<tf2::TransformException> tf_exception = this->assign_target_obj_pose(request->object_name, box_link);
-  if (tf_exception.has_value()) {
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->assign_target_obj_pose(request->object_name, box_link);
+  if (!target_pose.has_value()) {
     response->success = false;
-    response->message = std::format("Failed to get object pose for {}: {}", request->object_name, tf_exception->what());
+    response->message = std::format("Failed to get object pose for {0}", request->object_name);
     return;
   }
-  this->setupPlanningScene(request->object_name, current_obj_.pose, request->frame_id.c_str());
+
+  current_obj_.name = request->object_name;
+  current_obj_.pose = target_pose.value();
+  this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
 
   bool success = this->doPickTask();
   response->success = success;
@@ -121,18 +125,37 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
 }
 
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
-  std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
-    RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object_name.c_str());
+                                           std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
+  RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object_name.c_str());
+  const std::string target_link = request->object_name + "/base_link";
 
-    // Just detach object for now
-    bool success = this->doPlaceTask();
-    response->success = success;
-    response->message = success ? "Place task executed successfully" : "Failed to execute place task";
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->assign_target_obj_pose(request->object_name, target_link);
+  if (!target_pose.has_value()) {
+    response->success = false;
+    response->message = std::format("Failed to get object pose for {0}", request->object_name);
+    return;
+  }
+
+  geometry_msgs::msg::PoseStamped target_pose_stamped;
+  target_pose_stamped.header.frame_id = request->frame_id;
+  target_pose_stamped.header.stamp = this->now();
+  target_pose_stamped.pose = target_pose.value();
+  target_pose_stamped.pose.position.z += 0.1; // Add offset to ensure the place pose is above the target
+
+  bool success = this->doPlaceTask(target_pose_stamped);
+  if (success){
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name}); // Remove object from planning scene after detaching
+    current_obj_ = Object(); // Clear current object information
+  }
+
+  response->success = success;
+  response->message = success ? "Place task executed successfully" : "Failed to execute place task";
 }
 
 KOIPickPlaceController::~KOIPickPlaceController(){
   RCLCPP_INFO(this->get_logger(), "Shutting down KOIPickPlaceController");
   attach_object_stage_ = nullptr; // Just in case, to avoid dangling pointer
+  robot_model = nullptr;
 
   pick_task_.clear();
   place_task_.clear();

@@ -55,8 +55,8 @@ mtc::Task KOIPickPlaceController::createPickTask(){
   return pick_task;
 }
 
-bool KOIPickPlaceController::doPlaceTask(){
-  place_task_ = this->createPlaceTask(current_obj_.name);
+bool KOIPickPlaceController::doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose_stamped){
+  place_task_ = this->createPlaceTask(target_pose_stamped);
 
   try{
     place_task_.init();
@@ -83,7 +83,8 @@ bool KOIPickPlaceController::doPlaceTask(){
   return true;
 }
 
-mtc::Task KOIPickPlaceController::createPlaceTask(const std::string &object_name){
+mtc::Task KOIPickPlaceController::createPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose_stamped){
+  sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
   mtc::Task place_task;
   place_task.stages()->setName("place task");
   place_task.loadRobotModel(this->shared_from_this());
@@ -98,11 +99,11 @@ mtc::Task KOIPickPlaceController::createPlaceTask(const std::string &object_name
   current_state_ptr = stage_state_current.get();
   place_task.add(std::move(stage_state_current));
 
-  attach_object_stage_ = nullptr; // Will be set in addAttachObjectStage
-
-  auto stage_detach = std::make_unique<stages::ModifyPlanningScene>("detach object");
-  stage_detach->detachObject(object_name, hand_frame_);
-  place_task.add(std::move(stage_detach));
+  this->addMoveToPlaceStage(place_task);
+  this->addSamplePlacePoseStage(place_task, current_state_ptr, target_pose_stamped);
+  this->addDetachObjectStage(place_task);
+  this->addRetreatStage(place_task);
+  this->addReturnHomeStage(place_task);
 
   return place_task;
 }
