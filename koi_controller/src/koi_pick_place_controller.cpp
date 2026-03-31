@@ -42,8 +42,6 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
   // Set up grasp pose orientation and frame
   grasp_pose_.header.frame_id = "world";
   grasp_pose_.pose.orientation = tf2::toMsg(tf2::Quaternion(0, 1.0, 0, 0)); // Points the gripper downwards
-
-  attach_object_stage_ = nullptr;
 }
 
 rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::getNodeBaseInterface(){
@@ -64,7 +62,7 @@ void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
   planning_scene_interface_.applyCollisionObject(collision_obj);
 }
 
-std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::assign_target_obj_pose(const std::string &object_name,
+std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::compute_target_pose(const std::string &object_name,
                                                                                       const std::string &obj_frame_name){
   geometry_msgs::msg::TransformStamped box_tf;
   geometry_msgs::msg::Pose target_pose;
@@ -108,7 +106,7 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
   RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
   const std::string box_link = request->object_name + "/base_link";
 
-  std::optional<geometry_msgs::msg::Pose> target_pose = this->assign_target_obj_pose(request->object_name, box_link);
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->object_name, box_link);
   if (!target_pose.has_value()) {
     response->success = false;
     response->message = std::format("Failed to get object pose for {0}", request->object_name);
@@ -126,13 +124,14 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
 
 void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
                                            std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
-  RCLCPP_INFO(this->get_logger(), "Received place request for object: %s", request->object_name.c_str());
-  const std::string target_link = request->object_name + "/base_link";
+  RCLCPP_INFO(this->get_logger(), "Received place request for object: %s to :%s",
+              current_obj_.name.c_str(), request->target_name.c_str());
+  const std::string target_link = request->target_name + "/base_link";
 
-  std::optional<geometry_msgs::msg::Pose> target_pose = this->assign_target_obj_pose(request->object_name, target_link);
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->target_name, target_link);
   if (!target_pose.has_value()) {
     response->success = false;
-    response->message = std::format("Failed to get object pose for {0}", request->object_name);
+    response->message = std::format("Failed to get pose for {0}", request->target_name);
     return;
   }
 
@@ -154,8 +153,6 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
 
 KOIPickPlaceController::~KOIPickPlaceController(){
   RCLCPP_INFO(this->get_logger(), "Shutting down KOIPickPlaceController");
-  attach_object_stage_ = nullptr; // Just in case, to avoid dangling pointer
-  robot_model = nullptr;
 
   pick_task_.clear();
   place_task_.clear();

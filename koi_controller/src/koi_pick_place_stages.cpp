@@ -69,7 +69,6 @@ void KOIPickPlaceController::addAttachObjectStage(mtc::Task &pick_task){
 
   auto stage_attach = std::make_unique<stages::ModifyPlanningScene>("attach obj");
   stage_attach->attachObject(current_obj_.name, hand_frame_);
-  attach_object_stage_ = stage_attach.get();
   pick_task.add(std::move(stage_attach));
 }
 

@@ -43,8 +43,6 @@ mtc::Task KOIPickPlaceController::createPickTask(){
   current_state_ptr = stage_state_current.get();
   pick_task.add(std::move(stage_state_current));
 
-  attach_object_stage_ = nullptr; // Will be set in addAttachObjectStage
-
   // Stages
   this->addMoveToPickStage(pick_task);
   this->addApproachObjectStage(pick_task);

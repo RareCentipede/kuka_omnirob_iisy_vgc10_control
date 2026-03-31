@@ -73,10 +73,9 @@ class KOIPickPlaceController: public rclcpp::Node{
         void place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
                 std::shared_ptr<mpnp_interfaces::srv::Place::Response> response);
 
-        std::optional<geometry_msgs::msg::Pose> assign_target_obj_pose(const std::string &object_name,
+        std::optional<geometry_msgs::msg::Pose> compute_target_pose(const std::string &object_name,
                                                                        const std::string &obj_frame_name);
 
-        mtc::Stage* attach_object_stage_;
         mtc::Task createPickTask();
         void addMoveToPickStage(mtc::Task &pick_task);
         void addApproachObjectStage(mtc::Task &pick_task);
