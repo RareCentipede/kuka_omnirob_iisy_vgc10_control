@@ -36,6 +36,11 @@
 namespace mtc = moveit::task_constructor;
 namespace stages = mtc::stages;
 
+struct Object{
+    std::string name;
+    geometry_msgs::msg::Pose pose;
+};
+
 class KOIPickPlaceController: public rclcpp::Node{
     public:
         KOIPickPlaceController(const rclcpp::NodeOptions &options);
@@ -43,16 +48,11 @@ class KOIPickPlaceController: public rclcpp::Node{
         rclcpp::node_interfaces::NodeBaseInterface::SharedPtr getNodeBaseInterface();
 
         bool doPickTask();
-        bool doPlaceTask();
-        void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose,
-                                const char *frame_id);
+        bool doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose);
+        void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose, const char *frame_id);
+        const moveit::core::RobotModelConstPtr *robot_model = nullptr;
 
     private:
-        struct Object{
-            std::string name;
-            geometry_msgs::msg::Pose pose;
-        };
-
         const std::string arm_group_name_ = "arm_controller";
         const std::string hand_group_name_ = "vacuum_controller";
         const std::string hand_frame_ = "suction";
@@ -64,17 +64,18 @@ class KOIPickPlaceController: public rclcpp::Node{
         std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
         rclcpp::CallbackGroup::SharedPtr cb_group_;
         rclcpp::SubscriptionOptions subscription_options_;
-        
+
         rclcpp::Service<mpnp_interfaces::srv::Pick>::SharedPtr pick_service_;
         rclcpp::Service<mpnp_interfaces::srv::Place>::SharedPtr place_service_;
         moveit::planning_interface::PlanningSceneInterface planning_scene_interface_;
-        
+
         void pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
             std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response);
         void place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
                 std::shared_ptr<mpnp_interfaces::srv::Place::Response> response);
 
-        std::optional<tf2::TransformException> assign_target_obj_pose(const std::string &object_name, const std::string &obj_frame_name);
+        std::optional<geometry_msgs::msg::Pose> assign_target_obj_pose(const std::string &object_name,
+                                                                       const std::string &obj_frame_name);
 
         mtc::Stage* attach_object_stage_;
         mtc::Task createPickTask();
@@ -84,7 +85,13 @@ class KOIPickPlaceController: public rclcpp::Node{
         void addAttachObjectStage(mtc::Task &pick_task);
         void addLiftObjectStage(mtc::Task &pick_task);
 
-        mtc::Task createPlaceTask(const std::string &object_name);
+        mtc::Task createPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
+        void addMoveToPlaceStage(mtc::Task &place_task);
+        void addSamplePlacePoseStage(mtc::Task &place_task, mtc::Stage *attach_object_stage,
+                                     const geometry_msgs::msg::PoseStamped &target_pose);
+        void addDetachObjectStage(mtc::Task &place_task);
+        void addRetreatStage(mtc::Task &place_task);
+        void addReturnHomeStage(mtc::Task &place_task);
 
         mtc::solvers::PipelinePlannerPtr sampling_planner_;
         mtc::solvers::JointInterpolationPlannerPtr interpolation_planner_;
