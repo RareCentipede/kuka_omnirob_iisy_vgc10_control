@@ -1,6 +1,9 @@
 #include "koi_controller/koi_pick_place_controller.hpp"
 #include <format>
 
+using pick_response = mpnp_interfaces::srv::Pick::Response;
+using place_response = mpnp_interfaces::srv::Place::Response;
+
 KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &options)
 : Node("koi_pick_place_controller", options){
   RCLCPP_INFO(this->get_logger(), "Hello KOIPickPlaceController!");
@@ -104,11 +107,19 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
                                           std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response)
 {
   RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
+  if (current_obj_.name != ""){
+    response->success = false;
+    response->result = pick_response::GRIPPER_OCCUPIED;
+    response->message = std::format("Another object ({0}) is currently held. Place it before picking a new one.", 
+                                    current_obj_.name);
+    return;
+  }
   const std::string box_link = request->object_name + "/base_link";
 
   std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->object_name, box_link);
   if (!target_pose.has_value()) {
     response->success = false;
+    response->result = pick_response::TF_FAILED;
     response->message = std::format("Failed to get object pose for {0}", request->object_name);
     return;
   }
@@ -118,7 +129,13 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
   this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
 
   bool success = this->doPickTask();
+  if (not success){
+    // Clear object from planning scene if pick task fails
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+  }
   response->success = success;
+  response->result = success ? pick_response::SUCCESS : pick_response::IK_FAILED;
   response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
 
@@ -126,11 +143,18 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
                                            std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
   RCLCPP_INFO(this->get_logger(), "Received place request for object: %s to :%s",
               current_obj_.name.c_str(), request->target_name.c_str());
+  if (current_obj_.name == ""){
+    response->success = false;
+    response->result = place_response::GRIPPER_EMPTY;
+    response->message = "No object currently held. Pick an object before placing.";
+    return;
+  }
   const std::string target_link = request->target_name + "/base_link";
 
   std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->target_name, target_link);
   if (!target_pose.has_value()) {
     response->success = false;
+    response->result = place_response::TF_FAILED;
     response->message = std::format("Failed to get pose for {0}", request->target_name);
     return;
   }
@@ -148,6 +172,7 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
   }
 
   response->success = success;
+  response->result = success ? place_response::SUCCESS : place_response::IK_FAILED;
   response->message = success ? "Place task executed successfully" : "Failed to execute place task";
 }
 
