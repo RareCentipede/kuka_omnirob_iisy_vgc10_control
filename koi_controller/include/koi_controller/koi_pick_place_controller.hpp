@@ -20,6 +20,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "mpnp_interfaces/srv/pick.hpp"
 #include "mpnp_interfaces/srv/place.hpp"
+#include "mpnp_interfaces/srv/trigger.hpp"
 #include "mpnp_interfaces/msg/object.hpp"
 
 #include <moveit/planning_scene/planning_scene.hpp>
@@ -66,6 +67,8 @@ class KOIPickPlaceController: public rclcpp::Node{
 
         rclcpp::Service<mpnp_interfaces::srv::Pick>::SharedPtr pick_service_;
         rclcpp::Service<mpnp_interfaces::srv::Place>::SharedPtr place_service_;
+        rclcpp::Client<mpnp_interfaces::srv::Trigger>::SharedPtr grasp_client_;
+        rclcpp::Client<mpnp_interfaces::srv::Trigger>::SharedPtr release_client_;
         moveit::planning_interface::PlanningSceneInterface planning_scene_interface_;
 
         void pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,

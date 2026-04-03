@@ -29,6 +29,28 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
       cb_group_
   );
 
+  grasp_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("grasp");
+  release_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("release");
+
+  // Wait for grasp and release services to be available
+  while (!grasp_client_->wait_for_service(std::chrono::seconds(1))) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the grasp service. Exiting.");
+      return;
+    }
+    RCLCPP_WARN(this->get_logger(), "Waiting for grasp service to be available...");
+  }
+  RCLCPP_INFO(this->get_logger(), "Grasp service is now available.");
+
+  while (!release_client_->wait_for_service(std::chrono::seconds(1))) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the release service. Exiting.");
+      return;
+    }
+    RCLCPP_WARN(this->get_logger(), "Waiting for release service to be available...");
+  }
+  RCLCPP_INFO(this->get_logger(), "Release service is now available.");
+
   // TF2 setup
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_buffer_->setUsingDedicatedThread(true);
