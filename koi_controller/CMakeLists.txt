@@ -50,7 +50,7 @@ ament_target_dependencies(omnirob_controller
   ${PACKAGE_INCLUDE_DEPENDS}
 )
 
-install(TARGET omnirob_controller koi_pick_place_controller
+install(TARGETS omnirob_controller koi_pick_place_controller
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
