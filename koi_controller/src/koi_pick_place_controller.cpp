@@ -29,8 +29,8 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
       cb_group_
   );
 
-  grasp_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("grasp");
-  release_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("release");
+  grasp_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/grasp");
+  release_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/release");
 
   // Wait for grasp and release services to be available
   while (!grasp_client_->wait_for_service(std::chrono::seconds(1))) {
@@ -81,7 +81,7 @@ void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
   collision_obj.header.frame_id = frame_id;
   collision_obj.primitives.resize(1);
   collision_obj.primitives[0].type = shape_msgs::msg::SolidPrimitive::BOX;
-  collision_obj.primitives[0].dimensions = {0.1, 0.1, 0.1}; // Example dimensions, adjust as needed
+  collision_obj.primitives[0].dimensions = {0.3, 0.3, 0.3}; // Example dimensions, adjust as needed
   collision_obj.primitive_poses.resize(1);
   collision_obj.primitive_poses[0] = pose;
   planning_scene_interface_.applyCollisionObject(collision_obj);
@@ -110,7 +110,7 @@ std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::compute_target_p
     geometry_msgs::msg::Point p;
     p.x = box_tf.transform.translation.x;
     p.y = box_tf.transform.translation.y;
-    p.z = box_tf.transform.translation.z+0.25;
+    p.z = box_tf.transform.translation.z;
     return p;
   }();
   target_pose.orientation = [&box_tf](){
@@ -148,14 +148,69 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
 
   current_obj_.name = request->object_name;
   current_obj_.pose = target_pose.value();
-  this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
+  // this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
 
-  bool success = this->doPickTask();
-  if (not success){
+  bool move_to_pick_success = this->doMoveToPickTask();
+
+  if (not move_to_pick_success){
+    response->success = false;
+    response->result = pick_response::IK_FAILED;
+    response->message = "Failed to compute path to pick pose";
+  
     // Clear object from planning scene if pick task fails
-    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
     current_obj_ = Object();
+    return;
   }
+  rclcpp::sleep_for(std::chrono::seconds(2)); // Sleep to ensure the robot has reached the pick pose before sending grasp command
+  mpnp_interfaces::srv::Trigger::Request::SharedPtr grasp_req;
+  grasp_req = std::make_shared<mpnp_interfaces::srv::Trigger::Request>();
+  grasp_req->target_obj = current_obj_.name;
+
+  int max_attempts = 5;
+  int attempt = 0;
+  bool grasp_success = false;
+  auto grasp_result = grasp_client_->async_send_request(grasp_req);
+
+  while (attempt < max_attempts){
+    if (grasp_result.wait_for(std::chrono::seconds(5)) == std::future_status::ready){
+      if (grasp_result.get()->success){
+        RCLCPP_INFO(this->get_logger(), "Grasp successful for object: %s", current_obj_.name.c_str());
+        grasp_success = true;
+        break;
+      }
+      else{
+        RCLCPP_WARN(this->get_logger(), "Grasp attempt %d failed for object: %s. Retrying...", attempt+1, current_obj_.name.c_str());
+        attempt++;
+        grasp_result = grasp_client_->async_send_request(grasp_req);
+      }
+    }
+  }
+
+  if (!grasp_success){
+    response->success = false;
+    response->result = pick_response::GRASP_FAILED;
+    response->message = grasp_result.get()->message;
+  
+    // Clear object from planning scene if pick task fails
+    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+    RCLCPP_ERROR(this->get_logger(), "Grasp failed for object: %s after %d attempts", current_obj_.name.c_str(), max_attempts);
+    return;
+  }
+
+  bool retreat_success = this->doRetreatFromPickTask();
+  if (not retreat_success){
+    response->success = false;
+    response->result = pick_response::GRASP_FAILED;
+    response->message = "Failed to retreat after picking object";
+  
+    // Clear object from planning scene if pick task fails
+    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+    return;
+  }
+  bool success = move_to_pick_success && retreat_success;
   response->success = success;
   response->result = success ? pick_response::SUCCESS : pick_response::IK_FAILED;
   response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
@@ -189,7 +244,7 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
 
   bool success = this->doPlaceTask(target_pose_stamped);
   if (success){
-    planning_scene_interface_.removeCollisionObjects({current_obj_.name}); // Remove object from planning scene after detaching
+    // planning_scene_interface_.removeCollisionObjects({current_obj_.name}); // Remove object from planning scene after detaching
     current_obj_ = Object(); // Clear current object information
   }
 

@@ -1,56 +1,102 @@
 #include "koi_controller/koi_pick_place_controller.hpp"
 
-bool KOIPickPlaceController::doPickTask(){
-  pick_task_ = this->createPickTask();
+bool KOIPickPlaceController::doMoveToPickTask(){
+  auto move_to_pick_task = this->createMoveToPickTask();
 
   try{
-    pick_task_.init();
+    move_to_pick_task.init();
   }
   catch (mtc::InitStageException &e){
-    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize pick task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize move to pick task: " << e.what());
     RCLCPP_ERROR_STREAM(this->get_logger(), e);
     return false;
   }
 
-  if (!pick_task_.plan(5)){
-    RCLCPP_ERROR(this->get_logger(), "Failed to plan pick task");
+  if (!move_to_pick_task.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan move to pick task");
     return false;
   }
-  pick_task_.introspection().publishSolution(*pick_task_.solutions().front());
+  move_to_pick_task.introspection().publishSolution(*move_to_pick_task.solutions().front());
 
-  auto result = pick_task_.execute(*pick_task_.solutions().front());
+  auto result = move_to_pick_task.execute(*move_to_pick_task.solutions().front());
   if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
-    RCLCPP_ERROR(this->get_logger(), "Failed to execute pick task");
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute move to pick task");
     return false;
   }
 
   return true;
 }
 
-mtc::Task KOIPickPlaceController::createPickTask(){
+bool KOIPickPlaceController::doRetreatFromPickTask(){
+  auto retreat_from_pick_task = this->createRetreatFromPickTask();
+
+  try{
+    retreat_from_pick_task.init();
+  }
+  catch (mtc::InitStageException &e){
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize retreat from pick task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), e);
+    return false;
+  }
+
+  if (!retreat_from_pick_task.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan retreat from pick task");
+    return false;
+  }
+  retreat_from_pick_task.introspection().publishSolution(*retreat_from_pick_task.solutions().front());
+
+  auto result = retreat_from_pick_task.execute(*retreat_from_pick_task.solutions().front());
+  if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute retreat from pick task");
+    return false;
+  }
+
+  return true;
+}
+
+mtc::Task KOIPickPlaceController::createMoveToPickTask(){
   sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
-  mtc::Task pick_task;
-  pick_task.stages()->setName("pick task");
-  pick_task.loadRobotModel(this->shared_from_this());
+  mtc::Task move_to_pick_task;
+  move_to_pick_task.stages()->setName("pick task");
+  move_to_pick_task.loadRobotModel(this->shared_from_this());
 
   // Set task properties
-  pick_task.setProperty("group", arm_group_name_);
-  pick_task.setProperty("eef", "vacuum");
-  pick_task.setProperty("ik_frame", hand_frame_);
+  move_to_pick_task.setProperty("group", arm_group_name_);
+  move_to_pick_task.setProperty("eef", "vacuum");
+  move_to_pick_task.setProperty("ik_frame", hand_frame_);
 
   mtc::Stage *current_state_ptr = nullptr; // Forward current_state on to grasp pose generator
   auto stage_state_current = std::make_unique<stages::CurrentState>("current");
   current_state_ptr = stage_state_current.get();
-  pick_task.add(std::move(stage_state_current));
+  move_to_pick_task.add(std::move(stage_state_current));
 
   // Stages
-  this->addMoveToPickStage(pick_task);
-  this->addApproachObjectStage(pick_task);
-  this->addSampleGraspStage(pick_task, current_state_ptr);
-  this->addAttachObjectStage(pick_task);
-  this->addLiftObjectStage(pick_task);
+  this->addMoveToPickStage(move_to_pick_task);
+  this->addApproachObjectStage(move_to_pick_task);
+  this->addSampleGraspStage(move_to_pick_task, current_state_ptr);
 
-  return pick_task;
+  return move_to_pick_task;
+}
+
+mtc::Task KOIPickPlaceController::createRetreatFromPickTask(){
+  mtc::Task retreat_from_pick_task;
+  retreat_from_pick_task.stages()->setName("retreat from pick task");
+  retreat_from_pick_task.loadRobotModel(this->shared_from_this());
+
+  // Set task properties
+  retreat_from_pick_task.setProperty("group", arm_group_name_);
+  retreat_from_pick_task.setProperty("eef", "vacuum");
+  retreat_from_pick_task.setProperty("ik_frame", hand_frame_);
+
+  auto stage_state_current = std::make_unique<stages::CurrentState>("current");
+  retreat_from_pick_task.add(std::move(stage_state_current));
+
+  // Stages
+  // this->addAttachObjectStage(retreat_from_pick_task);
+  this->addLiftObjectStage(retreat_from_pick_task);
+  this->addRetreatStage(retreat_from_pick_task);
+
+  return retreat_from_pick_task;
 }
 
 bool KOIPickPlaceController::doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose_stamped){

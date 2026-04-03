@@ -48,8 +48,12 @@ class KOIPickPlaceController: public rclcpp::Node{
         ~KOIPickPlaceController();
         rclcpp::node_interfaces::NodeBaseInterface::SharedPtr getNodeBaseInterface();
 
-        bool doPickTask();
+        bool doMoveToPickTask();
+        bool doRetreatFromPickTask();
+
         bool doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose);
+        bool doMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
+        bool doReturnHomeTask();
         void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose, const char *frame_id);
 
     private:
@@ -79,7 +83,8 @@ class KOIPickPlaceController: public rclcpp::Node{
         std::optional<geometry_msgs::msg::Pose> compute_target_pose(const std::string &object_name,
                                                                        const std::string &obj_frame_name);
 
-        mtc::Task createPickTask();
+        mtc::Task createMoveToPickTask();
+        mtc::Task createRetreatFromPickTask();
         void addMoveToPickStage(mtc::Task &pick_task);
         void addApproachObjectStage(mtc::Task &pick_task);
         void addSampleGraspStage(mtc::Task &pick_task, mtc::Stage *current_state_ptr);
@@ -87,8 +92,10 @@ class KOIPickPlaceController: public rclcpp::Node{
         void addLiftObjectStage(mtc::Task &pick_task);
 
         mtc::Task createPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
+        mtc::Task createMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
+        mtc::Task createReturnHomeTask();
         void addMoveToPlaceStage(mtc::Task &place_task);
-        void addSamplePlacePoseStage(mtc::Task &place_task, mtc::Stage *attach_object_stage,
+        void addSamplePlacePoseStage(mtc::Task &place_task, mtc::Stage *current_state_ptr,
                                      const geometry_msgs::msg::PoseStamped &target_pose);
         void addDetachObjectStage(mtc::Task &place_task);
         void addRetreatStage(mtc::Task &place_task);
