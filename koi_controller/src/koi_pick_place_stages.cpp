@@ -48,7 +48,7 @@ void KOIPickPlaceController::addSampleGraspStage(mtc::Task &pick_task, mtc::Stag
 
   auto ik_wrapper = std::make_unique<stages::ComputeIK>("grasp pose IK", std::move(stage_sample_grasp));
   ik_wrapper->setMaxIKSolutions(8);
-  ik_wrapper->setMinSolutionDistance(1.0);
+  ik_wrapper->setMinSolutionDistance(0.1);
 
   ik_wrapper->setIKFrame(hand_frame_);
   ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
@@ -108,7 +108,7 @@ void KOIPickPlaceController::addSamplePlacePoseStage(mtc::Task &place_task, mtc:
 
   auto ik_wrapper = std::make_unique<stages::ComputeIK>("place pose IK", std::move(stage_generate_place_pose));
   ik_wrapper->setMaxIKSolutions(8);
-  ik_wrapper->setMinSolutionDistance(1.0);
+  ik_wrapper->setMinSolutionDistance(0.1);
   ik_wrapper->setIKFrame(hand_frame_);
   ik_wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
   ik_wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});

@@ -31,6 +31,11 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
 
   grasp_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/grasp");
   release_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/release");
+  gz_node_.Subscribe(
+    "/world/empty/dynamic_pose/info",
+    &KOIPickPlaceController::dynamic_tf_callback,
+    this
+  );
 
   // Wait for grasp and release services to be available
   while (!grasp_client_->wait_for_service(std::chrono::seconds(1))) {
@@ -72,6 +77,36 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
 
 rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::getNodeBaseInterface(){
   return this->get_node_base_interface();
+}
+
+void KOIPickPlaceController::dynamic_tf_callback(const gz::msgs::Pose_V &posev_msg){
+  for (const auto &pose_msg : posev_msg.pose()){
+    if (std::find(object_names_.begin(), object_names_.end(), pose_msg.name()) != object_names_.end()){
+      geometry_msgs::msg::TransformStamped tf_msg;
+      tf_msg.header.stamp = this->now();
+      tf_msg.header.frame_id = "world";
+      tf_msg.child_frame_id = pose_msg.name() + "/base_link";
+
+      tf_msg.transform.translation.x = pose_msg.position().x();
+      tf_msg.transform.translation.y = pose_msg.position().y();
+      tf_msg.transform.translation.z = pose_msg.position().z();
+  
+      tf_msg.transform.rotation.x = pose_msg.orientation().x();
+      tf_msg.transform.rotation.y = pose_msg.orientation().y();
+      tf_msg.transform.rotation.z = pose_msg.orientation().z();
+      tf_msg.transform.rotation.w = pose_msg.orientation().w();
+  
+      tf_broadcaster_->sendTransform(tf_msg);
+
+      current_obj_.pose.position.x = pose_msg.position().x();
+      current_obj_.pose.position.y = pose_msg.position().y();
+      current_obj_.pose.position.z = pose_msg.position().z();
+      current_obj_.pose.orientation.x = pose_msg.orientation().x();
+      current_obj_.pose.orientation.y = pose_msg.orientation().y();
+      current_obj_.pose.orientation.z = pose_msg.orientation().z();
+      current_obj_.pose.orientation.w = pose_msg.orientation().w();
+    }
+  }
 }
 
 void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,

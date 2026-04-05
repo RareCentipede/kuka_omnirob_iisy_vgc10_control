@@ -11,14 +11,16 @@ endif()
 set(PACKAGE_INCLUDE_DEPENDS
   ament_cmake
   rclcpp_action
-  geometry_msgs
-  moveit_ros_planning_interface
-  mpnp_interfaces
+  ros_gz_bridge
   nav_msgs
+  geometry_msgs
   tf2_geometry_msgs
   tf2_ros
-  ros_gz_bridge
+  moveit_ros_planning_interface
   moveit_task_constructor_core
+  mpnp_interfaces
+  gz-transport13
+  gz-msgs10
 )
 
 # find dependencies
@@ -44,6 +46,11 @@ target_compile_features(omnirob_controller PUBLIC c_std_99)  # Require C99 and C
 
 ament_target_dependencies(koi_pick_place_controller
   ${PACKAGE_INCLUDE_DEPENDS}
+)
+
+target_link_libraries(koi_pick_place_controller
+  gz-transport13::gz-transport13
+  gz-msgs10::gz-msgs10
 )
 
 ament_target_dependencies(omnirob_controller

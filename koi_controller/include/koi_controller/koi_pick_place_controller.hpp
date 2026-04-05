@@ -10,8 +10,11 @@
 #include <string>
 #include <optional>
 #include <format>
+#include <algorithm>
 
 #include <rclcpp/rclcpp.hpp>
+#include <gz/transport/Node.hh>
+#include <gz/msgs/pose_v.pb.h>
 
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -58,6 +61,8 @@ class KOIPickPlaceController: public rclcpp::Node{
         void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose, const char *frame_id);
 
     private:
+        gz::transport::Node gz_node_;
+        std::array<std::string, 3> object_names_ = {"box", "goal", "unknown"};
         const std::string arm_group_name_ = "arm_controller";
         const std::string hand_group_name_ = "vacuum_controller";
         const std::string hand_frame_ = "suction";
@@ -77,6 +82,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         rclcpp::Client<mpnp_interfaces::srv::Trigger>::SharedPtr release_client_;
         moveit::planning_interface::PlanningSceneInterface planning_scene_interface_;
 
+        void dynamic_tf_callback(const gz::msgs::Pose_V &posev_msg);
         void pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
                           std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response);
         void place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
