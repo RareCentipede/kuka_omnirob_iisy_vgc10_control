@@ -55,6 +55,7 @@ KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &option
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_buffer_->setUsingDedicatedThread(true);
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
+  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 
   // Planners
   interpolation_planner_ = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
@@ -88,7 +89,7 @@ void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
 }
 
 std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::compute_target_pose(const std::string &object_name,
-                                                                                      const std::string &obj_frame_name){
+                                                                                    const std::string &obj_frame_name){
   geometry_msgs::msg::TransformStamped box_tf;
   geometry_msgs::msg::Pose target_pose;
 
