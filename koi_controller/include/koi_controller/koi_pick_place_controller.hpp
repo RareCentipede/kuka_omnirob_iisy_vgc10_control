@@ -14,6 +14,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <gz/transport/Node.hh>
+#include <gz/msgs/boolean.pb.h>
+#include <gz/msgs/pose.pb.h>
 #include <gz/msgs/pose_v.pb.h>
 
 #include <geometry_msgs/msg/pose.hpp>
@@ -82,6 +84,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         rclcpp::Client<mpnp_interfaces::srv::Trigger>::SharedPtr release_client_;
         moveit::planning_interface::PlanningSceneInterface planning_scene_interface_;
 
+        bool teleportObject(const std::string &object_name, const geometry_msgs::msg::Pose &new_pose);
         void dynamic_tf_callback(const gz::msgs::Pose_V &posev_msg);
         void pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
                           std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response);

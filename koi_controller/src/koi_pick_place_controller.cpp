@@ -303,6 +303,7 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
     }
   }
 
+  this->teleportObject(current_obj_.name, target_pose.value());
   planning_scene_interface_.removeCollisionObjects({current_obj_.name});
   current_obj_ = Object();
 
@@ -318,6 +319,50 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
   response->success = success;
   response->result = success ? place_response::SUCCESS : place_response::IK_FAILED;
   response->message = success ? "Place task executed successfully" : "Failed to execute place task";
+}
+
+bool KOIPickPlaceController::teleportObject(const std::string &object_name, const geometry_msgs::msg::Pose &new_pose){
+  RCLCPP_INFO(this->get_logger(), "Teleporting object %s to new pose (%.2f, %.2f, %.2f)", 
+              object_name.c_str(), new_pose.position.x, new_pose.position.y, new_pose.position.z);
+
+  gz::msgs::Pose teleport_req;
+  teleport_req.set_name(object_name);
+  teleport_req.mutable_position()->set_x(new_pose.position.x);
+  teleport_req.mutable_position()->set_y(new_pose.position.y);
+  teleport_req.mutable_position()->set_z(new_pose.position.z);
+  teleport_req.mutable_orientation()->set_x(new_pose.orientation.x);
+  teleport_req.mutable_orientation()->set_y(new_pose.orientation.y);
+  teleport_req.mutable_orientation()->set_z(new_pose.orientation.z);
+  teleport_req.mutable_orientation()->set_w(new_pose.orientation.w);
+
+  gz::msgs::Boolean teleport_response;
+  bool result;
+  bool executed = gz_node_.Request(
+      "/world/empty/set_pose",
+      teleport_req,
+      5000,
+      teleport_response,
+      result
+  );
+
+  if (executed){
+    if (result){
+      RCLCPP_INFO(
+        this->get_logger(), "Successfully teleported object %s. Response: %d",
+        object_name.c_str(), teleport_response.data()
+      );
+    }
+    else{
+      RCLCPP_ERROR(this->get_logger(), "Failed to teleport object %s: Service returned false", object_name.c_str());
+      return false;
+    }
+  }
+  else{
+    RCLCPP_ERROR(this->get_logger(), "Failed to teleport object %s: Service call timed out", object_name.c_str());
+    return false;
+  }
+
+  return true;
 }
 
 KOIPickPlaceController::~KOIPickPlaceController(){
