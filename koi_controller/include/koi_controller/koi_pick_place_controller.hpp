@@ -51,8 +51,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         bool doMoveToPickTask();
         bool doRetreatFromPickTask();
 
-        bool doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose);
-        bool doMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
+        bool doMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose_stamped);
         bool doReturnHomeTask();
         void setupPlanningScene(const std::string &object, const geometry_msgs::msg::Pose &pose, const char *frame_id);
 
@@ -91,7 +90,6 @@ class KOIPickPlaceController: public rclcpp::Node{
         void addAttachObjectStage(mtc::Task &pick_task);
         void addLiftObjectStage(mtc::Task &pick_task);
 
-        mtc::Task createPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
         mtc::Task createMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose);
         mtc::Task createReturnHomeTask();
         void addMoveToPlaceStage(mtc::Task &place_task);
@@ -106,7 +104,7 @@ class KOIPickPlaceController: public rclcpp::Node{
         mtc::solvers::CartesianPathPtr cartesian_planner_;
 
         mtc::Task pick_task_;
-        mtc::Task place_task_;
+        mtc::Task move_to_place_task;
 };
 
 #endif  // KOI_PICK_PLACE_CONTROLLER_HPP_

@@ -148,7 +148,7 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
 
   current_obj_.name = request->object_name;
   current_obj_.pose = target_pose.value();
-  // this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
+  this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
 
   bool move_to_pick_success = this->doMoveToPickTask();
 
@@ -158,7 +158,7 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
     response->message = "Failed to compute path to pick pose";
   
     // Clear object from planning scene if pick task fails
-    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
     current_obj_ = Object();
     return;
   }
@@ -191,11 +191,11 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
     response->success = false;
     response->result = pick_response::GRASP_FAILED;
     response->message = grasp_result.get()->message;
-  
+
     // Clear object from planning scene if pick task fails
-    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
-    current_obj_ = Object();
     RCLCPP_ERROR(this->get_logger(), "Grasp failed for object: %s after %d attempts", current_obj_.name.c_str(), max_attempts);
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
     return;
   }
 
@@ -206,7 +206,7 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
     response->message = "Failed to retreat after picking object";
   
     // Clear object from planning scene if pick task fails
-    // planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
     current_obj_ = Object();
     return;
   }
@@ -240,14 +240,45 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
   target_pose_stamped.header.frame_id = request->frame_id;
   target_pose_stamped.header.stamp = this->now();
   target_pose_stamped.pose = target_pose.value();
-  target_pose_stamped.pose.position.z += 0.1; // Add offset to ensure the place pose is above the target
 
-  bool success = this->doPlaceTask(target_pose_stamped);
-  if (success){
-    // planning_scene_interface_.removeCollisionObjects({current_obj_.name}); // Remove object from planning scene after detaching
-    current_obj_ = Object(); // Clear current object information
+  bool move_to_place_success = this->doMoveToPlaceTask(target_pose_stamped);
+  if (!move_to_place_success){
+    response->success = false;
+    response->result = place_response::IK_FAILED;
+    response->message = "Failed to compute path to place pose";
+    return;
+  }
+  rclcpp::sleep_for(std::chrono::seconds(2)); // Sleep to ensure the robot has reached the place pose before sending release command
+  mpnp_interfaces::srv::Trigger::Request::SharedPtr release_req;
+  release_req = std::make_shared<mpnp_interfaces::srv::Trigger::Request>();
+  release_req->target_obj = current_obj_.name;
+
+  auto release_result = release_client_->async_send_request(release_req);
+  if (release_result.wait_for(std::chrono::seconds(5)) == std::future_status::ready){
+    if (release_result.get()->success){
+      RCLCPP_INFO(this->get_logger(), "Release successful for object: %s", current_obj_.name.c_str());
+    }
+    else{
+      RCLCPP_ERROR(this->get_logger(), "Release failed for object: %s. Message: %s", current_obj_.name.c_str(), release_result.get()->message.c_str());
+      response->success = false;
+      response->result = place_response::RELEASE_FAILED;
+      response->message = release_result.get()->message;
+      return;
+    }
   }
 
+  planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+  current_obj_ = Object();
+
+  bool retreat_success = this->doReturnHomeTask();
+  if (!retreat_success){
+    response->success = false;
+    response->result = place_response::RETURN_HOME_FAILED;
+    response->message = "Failed to return home after placing object";
+    return;
+  }
+
+  bool success = move_to_place_success && retreat_success;
   response->success = success;
   response->result = success ? place_response::SUCCESS : place_response::IK_FAILED;
   response->message = success ? "Place task executed successfully" : "Failed to execute place task";
@@ -257,7 +288,7 @@ KOIPickPlaceController::~KOIPickPlaceController(){
   RCLCPP_INFO(this->get_logger(), "Shutting down KOIPickPlaceController");
 
   pick_task_.clear();
-  place_task_.clear();
+  move_to_place_task.clear();
 
   sampling_planner_.reset();
   interpolation_planner_.reset();

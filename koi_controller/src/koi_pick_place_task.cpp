@@ -92,34 +92,34 @@ mtc::Task KOIPickPlaceController::createRetreatFromPickTask(){
   retreat_from_pick_task.add(std::move(stage_state_current));
 
   // Stages
-  // this->addAttachObjectStage(retreat_from_pick_task);
+  this->addAttachObjectStage(retreat_from_pick_task);
   this->addLiftObjectStage(retreat_from_pick_task);
   this->addRetreatStage(retreat_from_pick_task);
 
   return retreat_from_pick_task;
 }
 
-bool KOIPickPlaceController::doPlaceTask(geometry_msgs::msg::PoseStamped &target_pose_stamped){
-  place_task_ = this->createPlaceTask(target_pose_stamped);
+bool KOIPickPlaceController::doMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose_stamped){
+  auto move_to_place_task = this->createMoveToPlaceTask(target_pose_stamped);
 
   try{
-    place_task_.init();
+    move_to_place_task.init();
   }
   catch (mtc::InitStageException &e){
-    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize place task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize move to place task: " << e.what());
     RCLCPP_ERROR_STREAM(this->get_logger(), e);
     return false;
   }
 
-  if (!place_task_.plan(5)){
-    RCLCPP_ERROR(this->get_logger(), "Failed to plan place task");
+  if (!move_to_place_task.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan move to place task");
     return false;
   }
-  place_task_.introspection().publishSolution(*place_task_.solutions().front());
+  move_to_place_task.introspection().publishSolution(*move_to_place_task.solutions().front());
 
-  auto result = place_task_.execute(*place_task_.solutions().front());
+  auto result = move_to_place_task.execute(*move_to_place_task.solutions().front());
   if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
-    RCLCPP_ERROR(this->get_logger(), "Failed to execute place task");
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute move to place task");
     return false;
   }
 
@@ -127,10 +127,38 @@ bool KOIPickPlaceController::doPlaceTask(geometry_msgs::msg::PoseStamped &target
   return true;
 }
 
-mtc::Task KOIPickPlaceController::createPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose_stamped){
+bool KOIPickPlaceController::doReturnHomeTask(){
+  auto return_home_task = this->createReturnHomeTask();
+
+  try{
+    return_home_task.init();
+  }
+  catch (mtc::InitStageException &e){
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to initialize move to place task: " << e.what());
+    RCLCPP_ERROR_STREAM(this->get_logger(), e);
+    return false;
+  }
+
+  if (!return_home_task.plan(5)){
+    RCLCPP_ERROR(this->get_logger(), "Failed to plan move to place task");
+    return false;
+  }
+  return_home_task.introspection().publishSolution(*return_home_task.solutions().front());
+
+  auto result = return_home_task.execute(*return_home_task.solutions().front());
+  if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS){
+    RCLCPP_ERROR(this->get_logger(), "Failed to execute move to place task");
+    return false;
+  }
+
+  planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+  return true;
+}
+
+mtc::Task KOIPickPlaceController::createMoveToPlaceTask(const geometry_msgs::msg::PoseStamped &target_pose_stamped){
   sampling_planner_ = std::make_shared<mtc::solvers::PipelinePlanner>(this->shared_from_this());
   mtc::Task place_task;
-  place_task.stages()->setName("place task");
+  place_task.stages()->setName("move to place task");
   place_task.loadRobotModel(this->shared_from_this());
 
   // Set task properties
@@ -145,9 +173,25 @@ mtc::Task KOIPickPlaceController::createPlaceTask(const geometry_msgs::msg::Pose
 
   this->addMoveToPlaceStage(place_task);
   this->addSamplePlacePoseStage(place_task, current_state_ptr, target_pose_stamped);
-  this->addDetachObjectStage(place_task);
-  this->addRetreatStage(place_task);
-  this->addReturnHomeStage(place_task);
-
   return place_task;
+}
+
+mtc::Task KOIPickPlaceController::createReturnHomeTask(){
+  mtc::Task return_home_task;
+  return_home_task.stages()->setName("return home task");
+  return_home_task.loadRobotModel(this->shared_from_this());
+
+  // Set task properties
+  return_home_task.setProperty("group", arm_group_name_);
+  return_home_task.setProperty("eef", "vacuum");
+  return_home_task.setProperty("ik_frame", hand_frame_);
+
+  auto stage_state_current = std::make_unique<stages::CurrentState>("current");
+  return_home_task.add(std::move(stage_state_current));
+
+  this->addDetachObjectStage(return_home_task);
+  this->addRetreatStage(return_home_task);
+  this->addReturnHomeStage(return_home_task);
+
+  return return_home_task;
 }
