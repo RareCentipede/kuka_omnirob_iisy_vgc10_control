@@ -83,6 +83,8 @@ void KOIPickPlaceController::dynamic_tf_callback(const gz::msgs::Pose_V &posev_m
   for (const auto &pose_msg : posev_msg.pose()){
     if (std::find(object_names_.begin(), object_names_.end(), pose_msg.name()) != object_names_.end()){
       geometry_msgs::msg::TransformStamped tf_msg;
+
+      // Use gz stamp if in the past, otherwise use now
       tf_msg.header.stamp = this->now();
       tf_msg.header.frame_id = "world";
       tf_msg.child_frame_id = pose_msg.name() + "/base_link";
@@ -133,7 +135,7 @@ std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::compute_target_p
     box_tf = tf_buffer_->lookupTransform(
       "world",
       obj_frame_name,
-      this->now(),
+      tf2::TimePointZero, // Get the latest available transform
       tf2::durationFromSec(1.0)
     );
   }
