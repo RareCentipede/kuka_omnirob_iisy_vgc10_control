@@ -8,6 +8,7 @@
 #include <eigen3/Eigen/Dense>
 #include <mutex>
 #include <tf2_ros/transform_broadcaster.hpp>
+#include <tf2_ros/static_transform_broadcaster.hpp>
 
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -29,6 +30,7 @@ class OmnirobController: public rclcpp::Node{
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr twist_publisher_;
     rclcpp::Service<mpnp_interfaces::srv::MoveBase>::SharedPtr move_base_service_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
 
     void odom_calback(const nav_msgs::msg::Odometry &odom_msg);
     void move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,

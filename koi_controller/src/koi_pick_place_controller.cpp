@@ -1,382 +1,399 @@
-#include <rclcpp/rclcpp.hpp>
-#include <moveit/planning_scene/planning_scene.hpp>
-#include <moveit/planning_scene_interface/planning_scene_interface.hpp>
-#include <moveit/task_constructor/task.h>
-#include <moveit/task_constructor/solvers.h>
-#include <moveit/task_constructor/stages.h>
-#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#else
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#endif
-#if __has_include(<tf2_eigen/tf2_eigen.hpp>)
-#include <tf2_eigen/tf2_eigen.hpp>
-#else
-#include <tf2_eigen/tf2_eigen.h>
-#endif
+#include "koi_controller/koi_pick_place_controller.hpp"
+#include <format>
 
-static const rclcpp::Logger LOGGER = rclcpp::get_logger("mtc_tutorial");
-namespace mtc = moveit::task_constructor;
+using pick_response = mpnp_interfaces::srv::Pick::Response;
+using place_response = mpnp_interfaces::srv::Place::Response;
 
-class MTCTaskNode
-{
-public:
-  MTCTaskNode(const rclcpp::NodeOptions& options);
+KOIPickPlaceController::KOIPickPlaceController(const rclcpp::NodeOptions &options)
+: Node("koi_pick_place_controller", options){
+  RCLCPP_INFO(this->get_logger(), "Hello KOIPickPlaceController!");
 
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr getNodeBaseInterface();
+  // Callback group
+  cb_group_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::Reentrant
+  );
+  subscription_options_.callback_group = cb_group_;
 
-  void doTask();
+  // Services
+  pick_service_ = this->create_service<mpnp_interfaces::srv::Pick>(
+    "/koi_pick_place_controller/pick", std::bind(&KOIPickPlaceController::pick_service, this,
+      std::placeholders::_1, std::placeholders::_2),
+      rclcpp::QoS(10),
+      cb_group_
+  );
 
-  void setupPlanningScene();
+  place_service_ = this->create_service<mpnp_interfaces::srv::Place>(
+    "/koi_pick_place_controller/place", std::bind(&KOIPickPlaceController::place_service, this,
+      std::placeholders::_1, std::placeholders::_2),
+      rclcpp::QoS(10),
+      cb_group_
+  );
 
-private:
-  // Compose an MTC task from a series of stages.
-  mtc::Task createTask();
-  mtc::Task task_;
-  rclcpp::Node::SharedPtr node_;
-};
+  grasp_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/grasp");
+  release_client_ = this->create_client<mpnp_interfaces::srv::Trigger>("/vacuum_tool/onrobot_vgc10/release");
+  gz_node_.Subscribe(
+    "/world/empty/dynamic_pose/info",
+    &KOIPickPlaceController::dynamic_tf_callback,
+    this
+  );
 
-MTCTaskNode::MTCTaskNode(const rclcpp::NodeOptions& options)
-  : node_{ std::make_shared<rclcpp::Node>("mtc_node", options) }
-{
-}
-
-rclcpp::node_interfaces::NodeBaseInterface::SharedPtr MTCTaskNode::getNodeBaseInterface()
-{
-  return node_->get_node_base_interface();
-}
-
-void MTCTaskNode::setupPlanningScene()
-{
-  moveit_msgs::msg::CollisionObject object;
-  object.id = "object";
-  object.header.frame_id = "world";
-  object.primitives.resize(1);
-  object.primitives[0].type = shape_msgs::msg::SolidPrimitive::CYLINDER;
-  object.primitives[0].dimensions = { 0.1, 0.02 };
-
-  geometry_msgs::msg::Pose pose;
-  pose.position.x = 0.5;
-  pose.position.y = -0.25;
-  pose.orientation.w = 1.0;
-  object.pose = pose;
-
-  moveit::planning_interface::PlanningSceneInterface psi;
-  psi.applyCollisionObject(object);
-}
-
-void MTCTaskNode::doTask()
-{
-  task_ = createTask();
-
-  try
-  {
-    task_.init();
+  // Wait for grasp and release services to be available
+  while (!grasp_client_->wait_for_service(std::chrono::seconds(1))) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the grasp service. Exiting.");
+      return;
+    }
+    RCLCPP_WARN(this->get_logger(), "Waiting for grasp service to be available...");
   }
-  catch (mtc::InitStageException& e)
-  {
-    RCLCPP_ERROR_STREAM(LOGGER, e);
+  RCLCPP_INFO(this->get_logger(), "Grasp service is now available.");
+
+  while (!release_client_->wait_for_service(std::chrono::seconds(1))) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the release service. Exiting.");
+      return;
+    }
+    RCLCPP_WARN(this->get_logger(), "Waiting for release service to be available...");
+  }
+  RCLCPP_INFO(this->get_logger(), "Release service is now available.");
+
+  // TF2 setup
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  tf_buffer_->setUsingDedicatedThread(true);
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
+  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
+  // Planners
+  interpolation_planner_ = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
+
+  cartesian_planner_ = std::make_shared<mtc::solvers::CartesianPath>();
+  cartesian_planner_->setMaxVelocityScalingFactor(1.0);
+  cartesian_planner_->setMaxAccelerationScalingFactor(1.0);
+  cartesian_planner_->setStepSize(.01);
+
+  // Set up grasp pose orientation and frame
+  grasp_pose_.header.frame_id = "world";
+  grasp_pose_.pose.orientation = tf2::toMsg(tf2::Quaternion(0, 1.0, 0, 0)); // Points the gripper downwards
+}
+
+rclcpp::node_interfaces::NodeBaseInterface::SharedPtr KOIPickPlaceController::getNodeBaseInterface(){
+  return this->get_node_base_interface();
+}
+
+void KOIPickPlaceController::dynamic_tf_callback(const gz::msgs::Pose_V &posev_msg){
+  for (const auto &pose_msg : posev_msg.pose()){
+    if (std::find(object_names_.begin(), object_names_.end(), pose_msg.name()) != object_names_.end()){
+      geometry_msgs::msg::TransformStamped tf_msg;
+
+      // Use gz stamp if in the past, otherwise use now
+      tf_msg.header.stamp = this->now();
+      tf_msg.header.frame_id = "world";
+      tf_msg.child_frame_id = pose_msg.name();
+
+      tf_msg.transform.translation.x = pose_msg.position().x();
+      tf_msg.transform.translation.y = pose_msg.position().y();
+      tf_msg.transform.translation.z = pose_msg.position().z();
+  
+      tf_msg.transform.rotation.x = pose_msg.orientation().x();
+      tf_msg.transform.rotation.y = pose_msg.orientation().y();
+      tf_msg.transform.rotation.z = pose_msg.orientation().z();
+      tf_msg.transform.rotation.w = pose_msg.orientation().w();
+  
+      tf_broadcaster_->sendTransform(tf_msg);
+
+      current_obj_.pose.position.x = pose_msg.position().x();
+      current_obj_.pose.position.y = pose_msg.position().y();
+      current_obj_.pose.position.z = pose_msg.position().z();
+      current_obj_.pose.orientation.x = pose_msg.orientation().x();
+      current_obj_.pose.orientation.y = pose_msg.orientation().y();
+      current_obj_.pose.orientation.z = pose_msg.orientation().z();
+      current_obj_.pose.orientation.w = pose_msg.orientation().w();
+    }
+  }
+}
+
+void KOIPickPlaceController::setupPlanningScene(const std::string &object_name,
+                                                const geometry_msgs::msg::Pose &pose,
+                                                const char *frame_id){
+  moveit_msgs::msg::CollisionObject collision_obj;
+  collision_obj.id = object_name;
+  collision_obj.header.frame_id = frame_id;
+  collision_obj.primitives.resize(1);
+  collision_obj.primitives[0].type = shape_msgs::msg::SolidPrimitive::BOX;
+  collision_obj.primitives[0].dimensions = {0.3, 0.3, 0.3}; // Example dimensions, adjust as needed
+  collision_obj.primitive_poses.resize(1);
+  collision_obj.primitive_poses[0] = pose;
+  planning_scene_interface_.applyCollisionObject(collision_obj);
+}
+
+std::optional<geometry_msgs::msg::Pose> KOIPickPlaceController::compute_target_pose(const std::string &object_name,
+                                                                                    const std::string &obj_frame_name){
+  geometry_msgs::msg::TransformStamped box_tf;
+  geometry_msgs::msg::Pose target_pose;
+
+  try{
+    // World to object/base_link transformation gives the object's pose in the world frame
+    box_tf = tf_buffer_->lookupTransform(
+      "world",
+      obj_frame_name,
+      tf2::TimePointZero, // Get the latest available transform
+      tf2::durationFromSec(1.0)
+    );
+  }
+  catch (tf2::TransformException &ex){
+    RCLCPP_ERROR(this->get_logger(), "Could not get transform for object %s: %s", object_name.c_str(), ex.what());
+    return std::nullopt; // Return empty optional to indicate failure
+  }
+
+  target_pose.position = [&box_tf](){
+    geometry_msgs::msg::Point p;
+    p.x = box_tf.transform.translation.x;
+    p.y = box_tf.transform.translation.y;
+    p.z = box_tf.transform.translation.z;
+    return p;
+  }();
+  target_pose.orientation = [&box_tf](){
+    geometry_msgs::msg::Quaternion q;
+    q.x = box_tf.transform.rotation.x;
+    q.y = box_tf.transform.rotation.y;
+    q.z = box_tf.transform.rotation.z;
+    q.w = box_tf.transform.rotation.w;
+    return q;
+  }();
+
+  return target_pose; // No exception, pose assigned successfully
+}
+
+void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces::srv::Pick::Request> request,
+                                          std::shared_ptr<mpnp_interfaces::srv::Pick::Response> response)
+{
+  RCLCPP_INFO(this->get_logger(), "Received pick request for object: %s", request->object_name.c_str());
+  if (current_obj_.name != ""){
+    response->success = false;
+    response->result = pick_response::GRIPPER_OCCUPIED;
+    response->message = std::format("Another object ({0}) is currently held. Place it before picking a new one.", 
+                                    current_obj_.name);
     return;
   }
 
-  if (!task_.plan(5 /* max_solutions */))
-  {
-    RCLCPP_ERROR_STREAM(LOGGER, "Task planning failed");
-    return;
-  }
-  task_.introspection().publishSolution(*task_.solutions().front());
-
-  auto result = task_.execute(*task_.solutions().front());
-  if (result.val != moveit_msgs::msg::MoveItErrorCodes::SUCCESS)
-  {
-    RCLCPP_ERROR_STREAM(LOGGER, "Task execution failed");
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->object_name,
+                                                                                  request->object_name);
+  if (!target_pose.has_value()) {
+    response->success = false;
+    response->result = pick_response::TF_FAILED;
+    response->message = std::format("Failed to get object pose for {0}", request->object_name);
     return;
   }
 
-  return;
+  current_obj_.name = request->object_name;
+  current_obj_.pose = target_pose.value();
+  this->setupPlanningScene(current_obj_.name, current_obj_.pose, request->frame_id.c_str());
+
+  bool move_to_pick_success = this->doMoveToPickTask();
+
+  if (not move_to_pick_success){
+    response->success = false;
+    response->result = pick_response::IK_FAILED;
+    response->message = "Failed to compute path to pick pose";
+  
+    // Clear object from planning scene if pick task fails
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+    return;
+  }
+  rclcpp::sleep_for(std::chrono::seconds(2)); // Sleep to ensure the robot has reached the pick pose before sending grasp command
+  mpnp_interfaces::srv::Trigger::Request::SharedPtr grasp_req;
+  grasp_req = std::make_shared<mpnp_interfaces::srv::Trigger::Request>();
+  grasp_req->target_obj = current_obj_.name;
+
+  int max_attempts = 5;
+  int attempt = 0;
+  bool grasp_success = false;
+  auto grasp_result = grasp_client_->async_send_request(grasp_req);
+
+  while (attempt < max_attempts){
+    if (grasp_result.wait_for(std::chrono::seconds(5)) == std::future_status::ready){
+      if (grasp_result.get()->success){
+        RCLCPP_INFO(this->get_logger(), "Grasp successful for object: %s", current_obj_.name.c_str());
+        grasp_success = true;
+        break;
+      }
+      else{
+        RCLCPP_WARN(this->get_logger(), "Grasp attempt %d failed for object: %s. Retrying...", attempt+1, current_obj_.name.c_str());
+        attempt++;
+        grasp_result = grasp_client_->async_send_request(grasp_req);
+      }
+    }
+  }
+
+  if (!grasp_success){
+    response->success = false;
+    response->result = pick_response::GRASP_FAILED;
+    response->message = grasp_result.get()->message;
+
+    // Clear object from planning scene if pick task fails
+    RCLCPP_ERROR(this->get_logger(), "Grasp failed for object: %s after %d attempts", current_obj_.name.c_str(), max_attempts);
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+    return;
+  }
+
+  bool retreat_success = this->doRetreatFromPickTask();
+  if (not retreat_success){
+    response->success = false;
+    response->result = pick_response::GRASP_FAILED;
+    response->message = "Failed to retreat after picking object";
+  
+    // Clear object from planning scene if pick task fails
+    planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+    current_obj_ = Object();
+    return;
+  }
+  bool success = move_to_pick_success && retreat_success;
+  response->success = success;
+  response->result = success ? pick_response::SUCCESS : pick_response::IK_FAILED;
+  response->message = success ? "Pick task executed successfully" : "Failed to execute pick task";
 }
 
-mtc::Task MTCTaskNode::createTask()
-{
-  mtc::Task task;
-  task.stages()->setName("demo task");
-  task.loadRobotModel(node_);
-
-  const auto& arm_group_name = "panda_arm";
-  const auto& hand_group_name = "hand";
-  const auto& hand_frame = "panda_hand";
-
-  // Set task properties
-  task.setProperty("group", arm_group_name);
-  task.setProperty("eef", hand_group_name);
-  task.setProperty("ik_frame", hand_frame);
-
-  mtc::Stage* current_state_ptr = nullptr;  // Forward current_state on to grasp pose generator
-  auto stage_state_current = std::make_unique<mtc::stages::CurrentState>("current");
-  current_state_ptr = stage_state_current.get();
-  task.add(std::move(stage_state_current));
-
-  auto sampling_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
-  auto interpolation_planner = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
-
-  auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
-  cartesian_planner->setMaxVelocityScalingFactor(1.0);
-  cartesian_planner->setMaxAccelerationScalingFactor(1.0);
-  cartesian_planner->setStepSize(.01);
-
-  // clang-format off
-  auto stage_open_hand =
-      std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
-  // clang-format on
-  stage_open_hand->setGroup(hand_group_name);
-  stage_open_hand->setGoal("open");
-  task.add(std::move(stage_open_hand));
-
-  // clang-format off
-  auto stage_move_to_pick = std::make_unique<mtc::stages::Connect>(
-      "move to pick",
-      mtc::stages::Connect::GroupPlannerVector{ { arm_group_name, sampling_planner } });
-  // clang-format on
-  stage_move_to_pick->setTimeout(5.0);
-  stage_move_to_pick->properties().configureInitFrom(mtc::Stage::PARENT);
-  task.add(std::move(stage_move_to_pick));
-
-  // clang-format off
-  mtc::Stage* attach_object_stage =
-      nullptr;  // Forward attach_object_stage to place pose generator
-  // clang-format on
-
-  // This is an example of SerialContainer usage. It's not strictly needed here.
-  // In fact, `task` itself is a SerialContainer by default.
-  {
-    auto grasp = std::make_unique<mtc::SerialContainer>("pick object");
-    task.properties().exposeTo(grasp->properties(), { "eef", "group", "ik_frame" });
-    // clang-format off
-    grasp->properties().configureInitFrom(mtc::Stage::PARENT,
-                                          { "eef", "group", "ik_frame" });
-    // clang-format on
-
-    {
-      // clang-format off
-      auto stage =
-          std::make_unique<mtc::stages::MoveRelative>("approach object", cartesian_planner);
-      // clang-format on
-      stage->properties().set("marker_ns", "approach_object");
-      stage->properties().set("link", hand_frame);
-      stage->properties().configureInitFrom(mtc::Stage::PARENT, { "group" });
-      stage->setMinMaxDistance(0.1, 0.15);
-
-      // Set hand forward direction
-      geometry_msgs::msg::Vector3Stamped vec;
-      vec.header.frame_id = hand_frame;
-      vec.vector.z = 1.0;
-      stage->setDirection(vec);
-      grasp->insert(std::move(stage));
-    }
-
-    /****************************************************
-  ---- *               Generate Grasp Pose                *
-     ***************************************************/
-    {
-      // Sample grasp pose
-      auto stage = std::make_unique<mtc::stages::GenerateGraspPose>("generate grasp pose");
-      stage->properties().configureInitFrom(mtc::Stage::PARENT);
-      stage->properties().set("marker_ns", "grasp_pose");
-      stage->setPreGraspPose("open");
-      stage->setObject("object");
-      stage->setAngleDelta(M_PI / 12);
-      stage->setMonitoredStage(current_state_ptr);  // Hook into current state
-
-      // This is the transform from the object frame to the end-effector frame
-      Eigen::Isometry3d grasp_frame_transform;
-      Eigen::Quaterniond q = Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitX()) *
-                             Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY()) *
-                             Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
-      grasp_frame_transform.linear() = q.matrix();
-      grasp_frame_transform.translation().z() = 0.1;
-
-      // Compute IK
-      // clang-format off
-      auto wrapper =
-          std::make_unique<mtc::stages::ComputeIK>("grasp pose IK", std::move(stage));
-      // clang-format on
-      wrapper->setMaxIKSolutions(8);
-      wrapper->setMinSolutionDistance(1.0);
-      wrapper->setIKFrame(grasp_frame_transform, hand_frame);
-      wrapper->properties().configureInitFrom(mtc::Stage::PARENT, { "eef", "group" });
-      wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, { "target_pose" });
-      grasp->insert(std::move(wrapper));
-    }
-
-    {
-      // clang-format off
-      auto stage =
-          std::make_unique<mtc::stages::ModifyPlanningScene>("allow collision (hand,object)");
-      stage->allowCollisions("object",
-                             task.getRobotModel()
-                                 ->getJointModelGroup(hand_group_name)
-                                 ->getLinkModelNamesWithCollisionGeometry(),
-                             true);
-      // clang-format on
-      grasp->insert(std::move(stage));
-    }
-
-    {
-      auto stage = std::make_unique<mtc::stages::MoveTo>("close hand", interpolation_planner);
-      stage->setGroup(hand_group_name);
-      stage->setGoal("close");
-      grasp->insert(std::move(stage));
-    }
-
-    {
-      auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>("attach object");
-      stage->attachObject("object", hand_frame);
-      attach_object_stage = stage.get();
-      grasp->insert(std::move(stage));
-    }
-
-    {
-      // clang-format off
-      auto stage =
-          std::make_unique<mtc::stages::MoveRelative>("lift object", cartesian_planner);
-      // clang-format on
-      stage->properties().configureInitFrom(mtc::Stage::PARENT, { "group" });
-      stage->setMinMaxDistance(0.1, 0.3);
-      stage->setIKFrame(hand_frame);
-      stage->properties().set("marker_ns", "lift_object");
-
-      // Set upward direction
-      geometry_msgs::msg::Vector3Stamped vec;
-      vec.header.frame_id = "world";
-      vec.vector.z = 1.0;
-      stage->setDirection(vec);
-      grasp->insert(std::move(stage));
-    }
-    task.add(std::move(grasp));
+void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces::srv::Place::Request> request,
+                                           std::shared_ptr<mpnp_interfaces::srv::Place::Response> response){
+  RCLCPP_INFO(this->get_logger(), "Received place request for object: %s to :%s",
+              current_obj_.name.c_str(), request->target_name.c_str());
+  if (current_obj_.name == ""){
+    response->success = false;
+    response->result = place_response::GRIPPER_EMPTY;
+    response->message = "No object currently held. Pick an object before placing.";
+    return;
   }
 
-  {
-    // clang-format off
-    auto stage_move_to_place = std::make_unique<mtc::stages::Connect>(
-        "move to place",
-        mtc::stages::Connect::GroupPlannerVector{ { arm_group_name, sampling_planner },
-                                                  { hand_group_name, interpolation_planner } });
-    // clang-format on
-    stage_move_to_place->setTimeout(5.0);
-    stage_move_to_place->properties().configureInitFrom(mtc::Stage::PARENT);
-    task.add(std::move(stage_move_to_place));
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->target_name, request->target_name);
+  if (!target_pose.has_value()) {
+    response->success = false;
+    response->result = place_response::TF_FAILED;
+    response->message = std::format("Failed to get pose for {0}", request->target_name);
+    return;
   }
 
-  {
-    auto place = std::make_unique<mtc::SerialContainer>("place object");
-    task.properties().exposeTo(place->properties(), { "eef", "group", "ik_frame" });
-    // clang-format off
-    place->properties().configureInitFrom(mtc::Stage::PARENT,
-                                          { "eef", "group", "ik_frame" });
-    // clang-format on
+  geometry_msgs::msg::PoseStamped target_pose_stamped;
+  target_pose_stamped.header.frame_id = request->frame_id;
+  target_pose_stamped.header.stamp = this->now();
+  target_pose_stamped.pose = target_pose.value();
 
-    /****************************************************
-  ---- *               Generate Place Pose                *
-     ***************************************************/
-    {
-      // Sample place pose
-      auto stage = std::make_unique<mtc::stages::GeneratePlacePose>("generate place pose");
-      stage->properties().configureInitFrom(mtc::Stage::PARENT);
-      stage->properties().set("marker_ns", "place_pose");
-      stage->setObject("object");
+  bool move_to_place_success = this->doMoveToPlaceTask(target_pose_stamped);
+  if (!move_to_place_success){
+    response->success = false;
+    response->result = place_response::IK_FAILED;
+    response->message = "Failed to compute path to place pose";
+    return;
+  }
+  rclcpp::sleep_for(std::chrono::seconds(2)); // Sleep to ensure the robot has reached the place pose before sending release command
+  mpnp_interfaces::srv::Trigger::Request::SharedPtr release_req;
+  release_req = std::make_shared<mpnp_interfaces::srv::Trigger::Request>();
+  release_req->target_obj = current_obj_.name;
 
-      geometry_msgs::msg::PoseStamped target_pose_msg;
-      target_pose_msg.header.frame_id = "object";
-      target_pose_msg.pose.position.y = 0.5;
-      target_pose_msg.pose.orientation.w = 1.0;
-      stage->setPose(target_pose_msg);
-      stage->setMonitoredStage(attach_object_stage);  // Hook into attach_object_stage
-
-      // Compute IK
-      // clang-format off
-      auto wrapper =
-          std::make_unique<mtc::stages::ComputeIK>("place pose IK", std::move(stage));
-      // clang-format on
-      wrapper->setMaxIKSolutions(2);
-      wrapper->setMinSolutionDistance(1.0);
-      wrapper->setIKFrame("object");
-      wrapper->properties().configureInitFrom(mtc::Stage::PARENT, { "eef", "group" });
-      wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, { "target_pose" });
-      place->insert(std::move(wrapper));
+  auto release_result = release_client_->async_send_request(release_req);
+  if (release_result.wait_for(std::chrono::seconds(5)) == std::future_status::ready){
+    if (release_result.get()->success){
+      RCLCPP_INFO(this->get_logger(), "Release successful for object: %s", current_obj_.name.c_str());
     }
-
-    {
-      auto stage = std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
-      stage->setGroup(hand_group_name);
-      stage->setGoal("open");
-      place->insert(std::move(stage));
+    else{
+      RCLCPP_ERROR(this->get_logger(), "Release failed for object: %s. Message: %s", current_obj_.name.c_str(), release_result.get()->message.c_str());
+      response->success = false;
+      response->result = place_response::RELEASE_FAILED;
+      response->message = release_result.get()->message;
+      return;
     }
-
-    {
-      // clang-format off
-      auto stage =
-          std::make_unique<mtc::stages::ModifyPlanningScene>("forbid collision (hand,object)");
-      stage->allowCollisions("object",
-                             task.getRobotModel()
-                                 ->getJointModelGroup(hand_group_name)
-                                 ->getLinkModelNamesWithCollisionGeometry(),
-                             false);
-      // clang-format on
-      place->insert(std::move(stage));
-    }
-
-    {
-      auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>("detach object");
-      stage->detachObject("object", hand_frame);
-      place->insert(std::move(stage));
-    }
-
-    {
-      auto stage = std::make_unique<mtc::stages::MoveRelative>("retreat", cartesian_planner);
-      stage->properties().configureInitFrom(mtc::Stage::PARENT, { "group" });
-      stage->setMinMaxDistance(0.1, 0.3);
-      stage->setIKFrame(hand_frame);
-      stage->properties().set("marker_ns", "retreat");
-
-      // Set retreat direction
-      geometry_msgs::msg::Vector3Stamped vec;
-      vec.header.frame_id = "world";
-      vec.vector.x = -0.5;
-      stage->setDirection(vec);
-      place->insert(std::move(stage));
-    }
-    task.add(std::move(place));
   }
 
-  {
-    auto stage = std::make_unique<mtc::stages::MoveTo>("return home", interpolation_planner);
-    stage->properties().configureInitFrom(mtc::Stage::PARENT, { "group" });
-    stage->setGoal("ready");
-    task.add(std::move(stage));
+  this->teleportObject(current_obj_.name, target_pose.value());
+  planning_scene_interface_.removeCollisionObjects({current_obj_.name});
+  current_obj_ = Object();
+
+  bool retreat_success = this->doReturnHomeTask();
+  if (!retreat_success){
+    response->success = false;
+    response->result = place_response::RETURN_HOME_FAILED;
+    response->message = "Failed to return home after placing object";
+    return;
   }
-  return task;
+
+  bool success = move_to_place_success && retreat_success;
+  response->success = success;
+  response->result = success ? place_response::SUCCESS : place_response::IK_FAILED;
+  response->message = success ? "Place task executed successfully" : "Failed to execute place task";
 }
 
-int main(int argc, char** argv)
-{
+bool KOIPickPlaceController::teleportObject(const std::string &object_name, const geometry_msgs::msg::Pose &new_pose){
+  RCLCPP_INFO(this->get_logger(), "Teleporting object %s to new pose (%.2f, %.2f, %.2f)", 
+              object_name.c_str(), new_pose.position.x, new_pose.position.y, new_pose.position.z);
+
+  gz::msgs::Pose teleport_req;
+  teleport_req.set_name(object_name);
+  teleport_req.mutable_position()->set_x(new_pose.position.x);
+  teleport_req.mutable_position()->set_y(new_pose.position.y);
+  teleport_req.mutable_position()->set_z(new_pose.position.z);
+  teleport_req.mutable_orientation()->set_x(new_pose.orientation.x);
+  teleport_req.mutable_orientation()->set_y(new_pose.orientation.y);
+  teleport_req.mutable_orientation()->set_z(new_pose.orientation.z);
+  teleport_req.mutable_orientation()->set_w(new_pose.orientation.w);
+
+  gz::msgs::Boolean teleport_response;
+  bool result;
+  bool executed = gz_node_.Request(
+      "/world/empty/set_pose",
+      teleport_req,
+      5000,
+      teleport_response,
+      result
+  );
+
+  if (executed){
+    if (result){
+      RCLCPP_INFO(
+        this->get_logger(), "Successfully teleported object %s. Response: %d",
+        object_name.c_str(), teleport_response.data()
+      );
+    }
+    else{
+      RCLCPP_ERROR(this->get_logger(), "Failed to teleport object %s: Service returned false", object_name.c_str());
+      return false;
+    }
+  }
+  else{
+    RCLCPP_ERROR(this->get_logger(), "Failed to teleport object %s: Service call timed out", object_name.c_str());
+    return false;
+  }
+
+  return true;
+}
+
+KOIPickPlaceController::~KOIPickPlaceController(){
+  RCLCPP_INFO(this->get_logger(), "Shutting down KOIPickPlaceController");
+
+  pick_task_.clear();
+  move_to_place_task.clear();
+
+  sampling_planner_.reset();
+  interpolation_planner_.reset();
+  cartesian_planner_.reset();
+  tf_listener_.reset();
+  tf_buffer_.reset();
+}
+
+int main(int argc, char **argv){
   rclcpp::init(argc, argv);
 
   rclcpp::NodeOptions options;
   options.automatically_declare_parameters_from_overrides(true);
 
-  auto mtc_task_node = std::make_shared<MTCTaskNode>(options);
+  auto controller_node = std::make_shared<KOIPickPlaceController>(options);
   rclcpp::executors::MultiThreadedExecutor executor;
 
-  auto spin_thread = std::make_unique<std::thread>([&executor, &mtc_task_node]() {
-    executor.add_node(mtc_task_node->getNodeBaseInterface());
+  auto spin_thread = std::make_unique<std::thread>([&executor, &controller_node](){
+    executor.add_node(controller_node->getNodeBaseInterface());
     executor.spin();
-    executor.remove_node(mtc_task_node->getNodeBaseInterface());
+    executor.remove_node(controller_node->getNodeBaseInterface());
   });
-
-  mtc_task_node->setupPlanningScene();
-  mtc_task_node->doTask();
 
   spin_thread->join();
   rclcpp::shutdown();
-  return 0;
 }
