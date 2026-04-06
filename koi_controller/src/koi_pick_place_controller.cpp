@@ -87,7 +87,7 @@ void KOIPickPlaceController::dynamic_tf_callback(const gz::msgs::Pose_V &posev_m
       // Use gz stamp if in the past, otherwise use now
       tf_msg.header.stamp = this->now();
       tf_msg.header.frame_id = "world";
-      tf_msg.child_frame_id = pose_msg.name() + "/base_link";
+      tf_msg.child_frame_id = pose_msg.name();
 
       tf_msg.transform.translation.x = pose_msg.position().x();
       tf_msg.transform.translation.y = pose_msg.position().y();
@@ -174,9 +174,9 @@ void KOIPickPlaceController::pick_service(const std::shared_ptr<mpnp_interfaces:
                                     current_obj_.name);
     return;
   }
-  const std::string box_link = request->object_name + "/base_link";
 
-  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->object_name, box_link);
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->object_name,
+                                                                                  request->object_name);
   if (!target_pose.has_value()) {
     response->success = false;
     response->result = pick_response::TF_FAILED;
@@ -264,9 +264,8 @@ void KOIPickPlaceController::place_service(const std::shared_ptr<mpnp_interfaces
     response->message = "No object currently held. Pick an object before placing.";
     return;
   }
-  const std::string target_link = request->target_name + "/base_link";
 
-  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->target_name, target_link);
+  std::optional<geometry_msgs::msg::Pose> target_pose = this->compute_target_pose(request->target_name, request->target_name);
   if (!target_pose.has_value()) {
     response->success = false;
     response->result = place_response::TF_FAILED;
