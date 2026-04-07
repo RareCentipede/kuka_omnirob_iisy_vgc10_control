@@ -104,10 +104,9 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
     lin_vel.normalize();
     lin_vel *= request->speed; // Scale by the requested speed
 
-    int sign = std::signbit(lin_vel[0]) ? -1 : 1;
     twist_msg.header.stamp = this->now();
     twist_msg.header.frame_id = "world"; // Assuming the frame of reference is base
-    twist_msg.twist.linear.x = lin_vel.norm() * sign;
+    twist_msg.twist.linear.x = lin_vel.norm();
     twist_publisher_->publish(twist_msg);
   }
 
