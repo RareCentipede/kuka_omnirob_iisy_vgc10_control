@@ -26,6 +26,9 @@ OmnirobController::OmnirobController() : Node("omnirob_controller") {
 
     tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
     static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(*this);
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+    tf_buffer_->setUsingDedicatedThread(true);
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this);
 
     auto static_transform = geometry_msgs::msg::TransformStamped();
     static_transform.header.stamp = this->now();
@@ -34,16 +37,26 @@ OmnirobController::OmnirobController() : Node("omnirob_controller") {
     static_transform.transform.rotation.w = 1.0;
     static_tf_broadcaster_->sendTransform(static_transform);
 
-    position = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
-    target_position = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
+    pose = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
+    target_pose = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
 }
 
 void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
   // Update the current position
-  position[0] = odom_msg.pose.pose.position.x;
-  position[1] = odom_msg.pose.pose.position.y;
-  position[2] = odom_msg.pose.pose.position.z;
-  position[3] = odom_msg.pose.pose.orientation.w;
+  // Convert quaternion to yaw angle for simplicity, assuming planar movement
+  tf2::Quaternion q(
+    odom_msg.pose.pose.orientation.x,
+    odom_msg.pose.pose.orientation.y,
+    odom_msg.pose.pose.orientation.z,
+    odom_msg.pose.pose.orientation.w
+  );
+  tf2::Matrix3x3 m(q);
+  double roll, pitch, yaw;
+  m.getRPY(roll, pitch, yaw);
+  pose[0] = odom_msg.pose.pose.position.x;
+  pose[1] = odom_msg.pose.pose.position.y;
+  pose[2] = odom_msg.pose.pose.position.z;
+  pose[3] = yaw;
 
   geometry_msgs::msg::TransformStamped transformStamped;
   transformStamped.header.stamp = this->now();
@@ -69,62 +82,53 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
   geometry_msgs::msg::TwistStamped twist_msg;
 
   // Update the target position
-  target_position[0] = request->target_position.x;
-  target_position[1] = request->target_position.y;
-  target_position[2] = request->target_position.z;
-  target_position[3] = request->target_position.w;
+  target_pose[0] = request->target_position.x;
+  target_pose[1] = request->target_position.y;
+  target_pose[2] = request->target_position.z;
 
-  Vector4d vel = target_position - position;
-  double dist = vel.norm();
-  vel.normalize();
-  vel *= request->speed; // Scale by the requested speed
-  double est_time = dist / request->speed;
+  Vector3d lin_vel;
+  double yaw_rate;
+  double target_yaw;
+  target_yaw = std::atan2(target_pose[1] - pose[1], target_pose[0] - pose[0]);
 
-  double start_time = this->now().seconds();
-  double elapsed_time = this->now().seconds() - start_time;
-  while (!isClose(position, target_position, 1e-3) && (elapsed_time < (est_time * 2.0)))
-  {
-    vel = target_position - position;
-    vel.normalize();
-    vel *= request->speed; // Scale by the requested speed
-
+  while(abs((pose[3] - target_yaw)) > 1e-3){
+    yaw_rate = target_yaw - pose[3];
     twist_msg.header.stamp = this->now();
     twist_msg.header.frame_id = "platform_base_link"; // Assuming the frame of reference is base
-    twist_msg.twist.linear.x = vel[0];
-    twist_msg.twist.linear.y = vel[1];
-    twist_msg.twist.linear.z = vel[2];
-    twist_msg.twist.angular.x = 0.0;
-    twist_msg.twist.angular.y = 0.0;
-    twist_msg.twist.angular.z = 0.0;
-
+    twist_msg.twist.angular.z = yaw_rate;
     twist_publisher_->publish(twist_msg);
-    elapsed_time = this->now().seconds() - start_time;
-    if ((static_cast<int>(elapsed_time) % 5) < 1e-5){
-      RCLCPP_INFO(this->get_logger(), "Current position: (%f, %f, %f, %f), Target position: (%f, %f, %f, %f)",
-        position[0], position[1], position[2], position[3],
-        target_position[0], target_position[1], target_position[2], target_position[3]);
-    }
+  }
+
+  while (!isClose(pose.head<3>(), target_pose.head<3>(), (1e-2)/2)){
+    lin_vel = target_pose.head<3>() - pose.head<3>();
+    lin_vel.normalize();
+    lin_vel *= request->speed; // Scale by the requested speed
+
+    int sign = std::signbit(lin_vel[0]) ? -1 : 1;
+    twist_msg.header.stamp = this->now();
+    twist_msg.header.frame_id = "world"; // Assuming the frame of reference is base
+    twist_msg.twist.linear.x = lin_vel.norm() * sign;
+    twist_publisher_->publish(twist_msg);
   }
 
   // Stop the robot
   twist_msg.twist.linear.x = 0.0;
   twist_msg.twist.linear.y = 0.0;
   twist_msg.twist.linear.z = 0.0;
+  twist_msg.twist.angular.z = 0.0;
   twist_publisher_->publish(twist_msg);
 
   // For now, just respond with success and a message
   response->success = true;
-  response->message = "Target position reached!";
+  response->message = "Target position reached! Final position: (" + std::to_string(pose[0]) + ", " + \
+                       std::to_string(pose[1]) + ", " + std::to_string(pose[2]) + ", " + std::to_string(pose[3]) + ")"+ \
+                       "Final error: " + std::to_string((pose.head<3>() - target_pose.head<3>()).norm());
 }
 
-bool isClose(const Vector4d &home, const Vector4d &target, double tol){
+bool isClose(const Vector3d &home, const Vector3d &target, double tol){
   double euclidean_dist = (home - target).norm();
   return euclidean_dist < tol;
 }
-
-//TODO: Create an arm control interface, check to use service or action server, and create a client to call that
-//TODO: service/action server from a test node.
-//TODO: Create a scene to pick and place blocks.
 
 int main(int argc, char ** argv)
 {
