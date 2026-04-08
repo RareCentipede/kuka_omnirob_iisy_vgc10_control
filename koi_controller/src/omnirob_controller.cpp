@@ -76,8 +76,8 @@ void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
 
 void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
                                          std::shared_ptr<mpnp_interfaces::srv::MoveBase::Response> response) {
-  RCLCPP_INFO(this->get_logger(), "Received move_base request: target_position(%f, %f, %f, %f)",
-    request->target_position.x, request->target_position.y, request->target_position.z, request->target_position.w);
+  RCLCPP_INFO(this->get_logger(), "Received move_base request: target_position(%f, %f, %f)",
+    request->target_position.x, request->target_position.y, request->target_position.z);
 
   geometry_msgs::msg::TwistStamped twist_msg;
 
@@ -102,12 +102,15 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
   while (!isClose(pose.head<3>(), target_pose.head<3>(), (1e-2)/2)){
     lin_vel = target_pose.head<3>() - pose.head<3>();
     lin_vel.normalize();
-    lin_vel *= request->speed; // Scale by the requested speed
 
     twist_msg.header.stamp = this->now();
     twist_msg.header.frame_id = "world"; // Assuming the frame of reference is base
     twist_msg.twist.linear.x = lin_vel.norm();
     twist_publisher_->publish(twist_msg);
+    RCLCPP_INFO(this->get_logger(), "Current position: (%f, %f, %f), Target position: (%f, %f, %f), Error: %f",
+      pose[0], pose[1], pose[2], target_pose[0], target_pose[1], target_pose[2],
+      (pose.head<3>() - target_pose.head<3>()).norm()
+    );
   }
 
   // Stop the robot
