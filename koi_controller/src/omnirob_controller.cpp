@@ -1,17 +1,22 @@
 #include "koi_controller/omnirob_controller.hpp"
 
-OmnirobController::OmnirobController() : Node("omnirob_controller") {
+OmnirobController::OmnirobController() : Node("omnirob_position_controller") {
     RCLCPP_INFO(this->get_logger(), "hello world omnirob_controller package");
 
     rclcpp::CallbackGroup::SharedPtr cb_group = this->create_callback_group(
         rclcpp::CallbackGroupType::Reentrant
     );
 
+    rclcpp::CallbackGroup::SharedPtr cb_group2 = this->create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive
+    );
     rclcpp::SubscriptionOptions subscription_options;
+    rclcpp::SubscriptionOptions subscription_options2;
     subscription_options.callback_group = cb_group;
+    subscription_options2.callback_group = cb_group2;
 
-    subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      "/omnirob_controller/odometry", 10, std::bind(&OmnirobController::odom_calback, this, std::placeholders::_1),
+    robot_pos_sub_ = this->create_subscription<geometry_msgs::msg::Pose>(
+      "/omnirob_iisy_vgc10/pose", 10, std::bind(&OmnirobController::robot_pose_callback, this, std::placeholders::_1),
       subscription_options
     );
 
@@ -35,43 +40,26 @@ OmnirobController::OmnirobController() : Node("omnirob_controller") {
     static_transform.header.frame_id = "world";
     static_transform.child_frame_id = "odom";
     static_transform.transform.rotation.w = 1.0;
-    static_tf_broadcaster_->sendTransform(static_transform);
+    // static_tf_broadcaster_->sendTransform(static_transform);
 
     pose = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
     target_pose = {0.0, 0.0, 0.0, 0.0}; // [x, y, z, w]
 }
 
-void OmnirobController::odom_calback(const nav_msgs::msg::Odometry &odom_msg) {
-  // Update the current position
-  // Convert quaternion to yaw angle for simplicity, assuming planar movement
+void OmnirobController::robot_pose_callback(const geometry_msgs::msg::Pose &pose_msg) {
   tf2::Quaternion q(
-    odom_msg.pose.pose.orientation.x,
-    odom_msg.pose.pose.orientation.y,
-    odom_msg.pose.pose.orientation.z,
-    odom_msg.pose.pose.orientation.w
+    pose_msg.orientation.x,
+    pose_msg.orientation.y,
+    pose_msg.orientation.z,
+    pose_msg.orientation.w
   );
   tf2::Matrix3x3 m(q);
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
-  pose[0] = odom_msg.pose.pose.position.x;
-  pose[1] = odom_msg.pose.pose.position.y;
-  pose[2] = odom_msg.pose.pose.position.z;
+  pose[0] = pose_msg.position.x;
+  pose[1] = pose_msg.position.y;
+  pose[2] = 0.0;
   pose[3] = yaw;
-
-  geometry_msgs::msg::TransformStamped transformStamped;
-  transformStamped.header.stamp = this->now();
-  transformStamped.header.frame_id = "odom";
-  transformStamped.child_frame_id = "platform_base_link";
-  transformStamped.transform.translation.x = odom_msg.pose.pose.position.x;
-  transformStamped.transform.translation.y = odom_msg.pose.pose.position.y;
-  transformStamped.transform.translation.z = odom_msg.pose.pose.position.z;
-
-  transformStamped.transform.rotation.x = odom_msg.pose.pose.orientation.x;
-  transformStamped.transform.rotation.y = odom_msg.pose.pose.orientation.y;
-  transformStamped.transform.rotation.z = odom_msg.pose.pose.orientation.z;
-  transformStamped.transform.rotation.w = odom_msg.pose.pose.orientation.w;
-
-  tf_broadcaster_->sendTransform(transformStamped);
 }
 
 void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
@@ -106,7 +94,7 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
   while (!isClose(pose.head<3>(), target_pose.head<3>(), (1e-3)))
   {
     geometry_msgs::msg::PoseStamped target_pose_msg;
-    target_pose_msg.header.stamp = this->now() - rclcpp::Duration(0, 100000000); // Subtract 100ms to ensure the transform is available
+    target_pose_msg.header.stamp = this->now() - rclcpp::Duration(0, 500000000); // Subtract 100ms to ensure the transform is available
     target_pose_msg.header.frame_id = "world";
     target_pose_msg.pose.position.x = target_pose[0];
     target_pose_msg.pose.position.y = target_pose[1];
@@ -129,33 +117,6 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
 
   // Stop the robot
   twist_publisher_->publish(zero_twist_msg);
-
-  gz::msgs::Pose teleport_req;
-  gz::msgs::Boolean teleport_response;
-  bool result;
-  tf2::Quaternion q;
-  q.setRPY(0.0, 0.0, target_yaw);
-  teleport_req.set_name("omnirob_iisy_vgc10");
-  teleport_req.mutable_position()->set_x(target_pose[0]);
-  teleport_req.mutable_position()->set_y(target_pose[1]);
-  teleport_req.mutable_position()->set_z(target_pose[2]);
-  teleport_req.mutable_orientation()->set_x(q.x());
-  teleport_req.mutable_orientation()->set_y(q.y());
-  teleport_req.mutable_orientation()->set_z(q.z());
-  teleport_req.mutable_orientation()->set_w(q.w());
-  bool executed = gz_node_.Request(
-      "/world/empty/set_pose",
-      teleport_req,
-      5000,
-      teleport_response,
-      result
-  );
-
-  if (!executed || !result || !teleport_response.data()) {
-    RCLCPP_ERROR(this->get_logger(), "Failed to teleport the robot to the target position!");
-  } else {
-    RCLCPP_INFO(this->get_logger(), "Successfully teleported the robot to the target position!");
-  }
 
   // For now, just respond with success and a message
   response->success = true;

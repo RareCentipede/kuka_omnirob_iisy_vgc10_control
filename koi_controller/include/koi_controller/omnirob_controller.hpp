@@ -40,6 +40,7 @@ class OmnirobController: public rclcpp::Node{
 
   private:
     gz::transport::Node gz_node_;
+    rclcpp::Subscription<geometry_msgs::msg::Pose>::SharedPtr robot_pos_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr twist_publisher_;
     rclcpp::Service<mpnp_interfaces::srv::MoveBase>::SharedPtr move_base_service_;
@@ -48,6 +49,7 @@ class OmnirobController: public rclcpp::Node{
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
 
+    void robot_pose_callback(const geometry_msgs::msg::Pose &pose_msg);
     void odom_calback(const nav_msgs::msg::Odometry &odom_msg);
     void move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
                            std::shared_ptr<mpnp_interfaces::srv::MoveBase::Response> response);
