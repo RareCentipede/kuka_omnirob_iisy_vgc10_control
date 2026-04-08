@@ -8,6 +8,10 @@
 #include <eigen3/Eigen/Dense>
 
 #include <rclcpp/rclcpp.hpp>
+#include <gz/transport/Node.hh>
+#include <gz/msgs/pose.pb.h>
+#include <gz/msgs/boolean.pb.h>
+#include <gz/msgs/model.pb.h>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -35,6 +39,7 @@ class OmnirobController: public rclcpp::Node{
     Vector4d target_pose; // [x, y, z, w]
 
   private:
+    gz::transport::Node gz_node_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr twist_publisher_;
     rclcpp::Service<mpnp_interfaces::srv::MoveBase>::SharedPtr move_base_service_;

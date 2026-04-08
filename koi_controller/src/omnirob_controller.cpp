@@ -84,9 +84,8 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
   // Update the target position
   target_pose[0] = request->target_position.x;
   target_pose[1] = request->target_position.y;
-  target_pose[2] = request->target_position.z;
+  target_pose[2] = 0.0;
 
-  Vector3d lin_vel;
   double yaw_rate;
   double target_yaw;
   target_yaw = std::atan2(target_pose[1] - pose[1], target_pose[0] - pose[0]);
@@ -97,28 +96,66 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
     twist_msg.header.frame_id = "platform_base_link"; // Assuming the frame of reference is base
     twist_msg.twist.angular.z = yaw_rate;
     twist_publisher_->publish(twist_msg);
+
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Current heading: (%f), Target heading: (%f), Error: %f",
+                          pose[3], target_yaw, abs((pose[3] - target_yaw)));
   }
 
-  while (!isClose(pose.head<3>(), target_pose.head<3>(), (1e-2)/2)){
-    lin_vel = target_pose.head<3>() - pose.head<3>();
-    lin_vel.normalize();
+  geometry_msgs::msg::TwistStamped zero_twist_msg;
+  while (!isClose(pose.head<3>(), target_pose.head<3>(), (1e-3)))
+  {
+    geometry_msgs::msg::PoseStamped target_pose_msg;
+    target_pose_msg.header.stamp = this->now() - rclcpp::Duration(0, 100000000); // Subtract 100ms to ensure the transform is available
+    target_pose_msg.header.frame_id = "world";
+    target_pose_msg.pose.position.x = target_pose[0];
+    target_pose_msg.pose.position.y = target_pose[1];
+    target_pose_msg.pose.position.z = target_pose[2];
+
+    target_pose_msg = tf_buffer_->transform(target_pose_msg, "platform_base_link");
 
     twist_msg.header.stamp = this->now();
     twist_msg.header.frame_id = "world"; // Assuming the frame of reference is base
-    twist_msg.twist.linear.x = lin_vel.norm();
+    twist_msg.twist.linear.x = target_pose_msg.pose.position.x;
+    twist_msg.twist.linear.y = target_pose_msg.pose.position.y;
+    twist_msg.twist.linear.z = target_pose_msg.pose.position.z;
     twist_publisher_->publish(twist_msg);
-    RCLCPP_INFO(this->get_logger(), "Current position: (%f, %f, %f), Target position: (%f, %f, %f), Error: %f",
-      pose[0], pose[1], pose[2], target_pose[0], target_pose[1], target_pose[2],
-      (pose.head<3>() - target_pose.head<3>()).norm()
-    );
+
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Current position: (%f, %f, %f), Target position: (%f, %f, %f), Error: %f",
+                          pose[0], pose[1], pose[2], target_pose[0], target_pose[1], target_pose[2],
+                          (pose.head<3>() - target_pose.head<3>()).norm());
   }
 
   // Stop the robot
-  twist_msg.twist.linear.x = 0.0;
-  twist_msg.twist.linear.y = 0.0;
-  twist_msg.twist.linear.z = 0.0;
-  twist_msg.twist.angular.z = 0.0;
-  twist_publisher_->publish(twist_msg);
+  twist_publisher_->publish(zero_twist_msg);
+
+  gz::msgs::Pose teleport_req;
+  gz::msgs::Boolean teleport_response;
+  bool result;
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, target_yaw);
+  teleport_req.set_name("omnirob_iisy_vgc10");
+  teleport_req.mutable_position()->set_x(target_pose[0]);
+  teleport_req.mutable_position()->set_y(target_pose[1]);
+  teleport_req.mutable_position()->set_z(target_pose[2]);
+  teleport_req.mutable_orientation()->set_x(q.x());
+  teleport_req.mutable_orientation()->set_y(q.y());
+  teleport_req.mutable_orientation()->set_z(q.z());
+  teleport_req.mutable_orientation()->set_w(q.w());
+  bool executed = gz_node_.Request(
+      "/world/empty/set_pose",
+      teleport_req,
+      5000,
+      teleport_response,
+      result
+  );
+
+  if (!executed || !result || !teleport_response.data()) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to teleport the robot to the target position!");
+  } else {
+    RCLCPP_INFO(this->get_logger(), "Successfully teleported the robot to the target position!");
+  }
 
   // For now, just respond with success and a message
   response->success = true;
