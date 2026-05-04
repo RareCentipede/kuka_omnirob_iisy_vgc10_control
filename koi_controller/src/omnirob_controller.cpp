@@ -64,8 +64,8 @@ void OmnirobController::robot_pose_callback(const geometry_msgs::msg::Pose &pose
 
 void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces::srv::MoveBase::Request> request,
                                          std::shared_ptr<mpnp_interfaces::srv::MoveBase::Response> response) {
-  RCLCPP_INFO(this->get_logger(), "Received move_base request: target_position(%f, %f, %f)",
-    request->target_position.x, request->target_position.y, request->target_position.z);
+  RCLCPP_INFO(this->get_logger(), "Received move_base request: target_position(%f, %f, %f, %f)",
+    request->target_position.x, request->target_position.y, request->target_position.z, request->target_yaw);
 
   geometry_msgs::msg::TwistStamped twist_msg;
 
@@ -117,6 +117,19 @@ void OmnirobController::move_base_service(const std::shared_ptr<mpnp_interfaces:
 
   // Stop the robot
   twist_publisher_->publish(zero_twist_msg);
+
+  target_yaw = request->target_yaw;
+  while(abs((pose[3] - target_yaw)) > 1e-3){
+    yaw_rate = target_yaw - pose[3];
+    twist_msg.header.stamp = this->now();
+    twist_msg.header.frame_id = "platform_base_link"; // Assuming the frame of reference is base
+    twist_msg.twist.angular.z = yaw_rate;
+    twist_publisher_->publish(twist_msg);
+
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Current heading: (%f), Target heading: (%f), Error: %f",
+                          pose[3], target_yaw, abs((pose[3] - target_yaw)));
+  }
 
   // For now, just respond with success and a message
   response->success = true;
